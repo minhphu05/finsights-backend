@@ -22,7 +22,7 @@ flowchart LR
 
 The public path is Cloudflare Tunnel → Ingress NGINX → Go/Gin gateway. Ingress NGINX handles cluster ingress and host/TLS routing; the gateway is the single public API entry. Browsers use REST, while service-to-service calls stay on gRPC inside the cluster. The gateway centralizes CORS and JWT checks and is the right place to add a shared rate limiter before launch. Core services are `ClusterIP` only. The gateway forwards the signed bearer token; services that require identity verify it again.
 
-Auth owns credentials and sessions. Registration writes the account and an `account.created` outbox record in one MySQL transaction. A relay publishes that record to RabbitMQ. User consumes it idempotently to create the profile. This follows the event/outbox flow in [fiurozz-be](https://github.com/Fizzisme/fiurozz-be/tree/develop), with Go/gRPC contracts here. The local infrastructure repositories do not currently deploy RabbitMQ.
+Auth owns credentials and sessions. Registration writes the account and an `account.created` outbox record in one MySQL transaction. A relay publishes that record to RabbitMQ. User consumes it idempotently to create the profile. This follows the event/outbox flow in [fiurozz-be](https://github.com/Fizzisme/fiurozz-be/tree/develop), with Go/gRPC contracts here. RabbitMQ is deployed by the platform repository.
 
 The frontend currently uses mock market values, sample news, and browser-local watchlists/chat history. The contracts cover those screens, but no market-data provider or ingestion worker is included. The AI service has no model provider configured and returns an explicit `UNIMPLEMENTED` response until one is selected.
 
@@ -38,9 +38,9 @@ The frontend currently uses mock market values, sample news, and browser-local w
 
 ## Database boundary
 
-Connect each Go service to its own MySQL schema and least-privilege database user on the existing HeatWave system. DSNs are runtime secrets. The app requires a trusted CA file via `MYSQL_TLS_CA_FILE`, verifies the server certificate, and uses TLS 1.2 or newer. If the private endpoint is an IP rather than the certificate's DNS name, set `MYSQL_TLS_SERVER_NAME` to that certificate name. This repo intentionally does not contain SQL migrations: the infrastructure docs assign schema and migration ownership to `finsights-core-db`, which is not present in the workspace. Add the migrations there once that repository is available.
+Connect each Go service to its own MySQL schema and least-privilege database user on the existing HeatWave system. DSNs are runtime secrets. The app requires a trusted CA file via `MYSQL_TLS_CA_FILE`, verifies the server certificate, and uses TLS 1.2 or newer. If the endpoint is reached by IP, set `MYSQL_TLS_SERVER_NAME` to the database certificate's DNS name. The `finsights-coredb` repository owns creation of these databases, tables, columns, and app users.
 
-The deployment configuration accepts endpoints and credentials through environment variables; it does not hard-code a MySQL endpoint, password, JWT key, or broker credential. The selected production path is K3s → private network/VPN → MySQL HeatWave, with TLS certificate verification enabled. Repository review found only Tailscale between the two VPS nodes: the role accepts routes but does not advertise an OCI subnet, and the OCI Terraform has no VPN, DRG, peering, or route back to K3s. So the private database route is not configured in the code available here and still needs to be provisioned and checked on the live network. Separately, the Oracle Terraform defaults to creating a public MySQL NLB and its public subnet security list allows port 3306 from `0.0.0.0/0`; the deployment docs list those public endpoints as available. That is separate from the selected private path and needs review before production. The public API path is Cloudflare Tunnel → Ingress NGINX → Gateway. Ingress remains disabled until its hostname and TLS Secret are supplied.
+The deployment configuration accepts endpoints and credentials through environment variables; it does not hard-code a MySQL password, JWT key, or broker credential. The K3s node currently reaches the public Node 1 MySQL endpoint on TCP 3306, and the service still verifies MySQL TLS with the CoreDB CA. A private K3s-to-OCI route is not configured in the available infrastructure. The Oracle Terraform currently defines public MySQL NLB endpoints and allows port 3306 from `0.0.0.0/0`; restrict that source before production. The public API path is Cloudflare Tunnel → Ingress NGINX → Gateway. Ingress remains disabled until its hostname, TLS Secret, and Tunnel origin are configured.
 
 ## Local development
 
@@ -57,13 +57,29 @@ go run ./cmd/api-gateway
 
 Run `python -m pip install -r services/ai/requirements.txt`, then `make generate-ai` and `uvicorn services.ai.app:app --host 0.0.0.0 --port 8081` for the AI process. All services require their environment variables; see `.env.example`. RabbitMQ uses a durable topic exchange and a durable user provisioning queue with retry and dead-letter routing.
 
-`make generate` downloads pinned Go protoc plugins into `.tools/bin` and creates Go stubs under `gen/go`. `make generate-ai` requires the Python dependencies in `services/ai/requirements.txt` and creates Python stubs under `services/ai/generated`. The expected table contract is in [docs/database-contract.md](docs/database-contract.md); SQL migrations remain in the missing `finsights-core-db` repository.
+`make generate` downloads pinned Go protoc plugins into `.tools/bin` and creates Go stubs under `gen/go`. `make generate-ai` requires the Python dependencies in `services/ai/requirements.txt` and creates Python stubs under `services/ai/generated`. The expected table contract is in [docs/database-contract.md](docs/database-contract.md); database schemas are managed in `finsights-coredb`.
 
-## Container and K3s deployment
+## CI/CD and K3s deployment
 
-Build one Go image per service from this directory with `docker build -f Dockerfile.go --build-arg APP=api-gateway -t <registry>/finsights-api-gateway:<tag> .` (replace `APP` with `auth-service`, `user-service`, or `market-service`). Build AI with `docker build -f services/ai/Dockerfile -t <registry>/finsights-ai-service:<tag> .`.
+The `Build and deploy backend` GitHub Actions workflow builds five immutable `linux/amd64` images on pushes to `main`: the API gateway, auth, user, market, and AI services. It publishes each image to GHCR with the commit SHA, then updates `deploy/helm/values.yaml` to that same tag. The workflow uses the built-in `GITHUB_TOKEN`; it does not need an SSH key or database password. Argo CD polls this repository and rolls out the new image tag.
 
-The Helm chart lives in `finsights-platform-deployment/charts/finsights-backend`, matching the deployment boundary documented by the infrastructure repo. It creates internal `ClusterIP` Services, Deployments, a single-pod persistent RabbitMQ broker, and ingress-restricted NetworkPolicies. Ingress is disabled by default. Provide externally managed Secrets for database DSNs, JWT signing key, RabbitMQ connection URL, and RabbitMQ's initial username/password before installation. The dormant Argo CD Application template is in `deploy/argocd/application.yaml`; copy it into `finsights-platform-deployment/applications/` only after publishing images and creating the referenced Kubernetes Secrets. The current local backend folder is not yet a Git repository, so this scaffold does not apply resources to the live K3s cluster.
+The Helm chart is in `deploy/helm`. `finsights-platform-deployment/applications/finsights-backend.yaml` registers it under the existing `root-platform-apps` Application. Workloads use small requests and limits for the two 8 GB nodes. Internal Go services and the AI gRPC port are `ClusterIP` only. The gateway Ingress is disabled until the API hostname, TLS, and Cloudflare Tunnel origin are configured.
+
+Before the first sync, create the Kubernetes Secret `finsights-backend-secrets` in namespace `finsights-platform` with these keys:
+
+| Key | Used by | Value source |
+| --- | --- | --- |
+| `AUTH_MYSQL_DSN` | auth-service | MySQL Node 1 user `finsights_auth_app`, database `finsights_auth` |
+| `USER_MYSQL_DSN` | user-service | MySQL Node 1 user `finsights_user_app`, database `finsights_user` |
+| `MARKET_MYSQL_DSN` | market-service | MySQL Node 1 user `finsights_market_app`, database `finsights_market` |
+| `JWT_SIGNING_KEY` | gateway, auth, user | Random value of at least 32 bytes; use the same value for all three |
+| `RABBITMQ_URL` | auth, user | `amqp://admin:<encoded-password>@rabbitmq.finsights-platform.svc.cluster.local:5672/` |
+
+The DSNs must use TLS. The services enforce TLS 1.2+ and verify the MySQL certificate using the public Node 1 CA bundled in the chart; configure the certificate DNS name with `MYSQL_TLS_SERVER_NAME` if the database is reached through an IP address. Keep actual DSN passwords and the JWT key in the Kubernetes Secret only, never in Helm values or GitHub Actions logs.
+
+GHCR packages are private by default. Either make the five published packages public, or create an image pull Secret named `ghcr-pull-secret` in `finsights-platform` using a GitHub token with `read:packages`, then set `image.pullSecrets: [{name: ghcr-pull-secret}]` in `deploy/helm/values.yaml`. The backend source repository is public, but GHCR package visibility is configured separately.
+
+The frontend repository currently serves mock market/news data and browser-local watchlists; it does not call this API yet. After the internal deployment is healthy, configure the gateway Ingress and Tunnel origin, then point the frontend at the API and allow its origin through `CORS_ALLOWED_ORIGINS`.
 
 ## HTTP API (gateway)
 
@@ -88,7 +104,7 @@ Health endpoints are `/livez` and `/readyz` on the gateway, `/healthz` and `/rea
 
 ## Open decisions
 
-- SQL schema/migration work is waiting for `finsights-core-db` as requested.
+- AI service database integration has not been implemented; the current AI service is an explicit stub and does not connect to the MySQL Node 2 schema.
 - A market data/news source and ingestion cadence have not been selected.
 - An AI model/provider, API credentials, and answer grounding policy have not been selected.
 - The frontend has no login/register UI yet, and its watchlist/chat data is currently local-only.

@@ -1,6 +1,7 @@
 .git
 .tools
 .env
+deploy/helm
 *.log
 services/ai/.venv
 services/ai/__pycache__

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: finsights-backend
+description: Finsights API gateway and internal backend services
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

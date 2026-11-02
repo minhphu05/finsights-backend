@@ -1,0 +1,168 @@
+image:
+  registry: ghcr.io/minhphu05/finsights-backend
+  imageTag: sha-bootstrap
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+secretName: finsights-backend-secrets
+
+config:
+  corsAllowedOrigins: ""
+  jwtIssuer: finsights-auth
+  jwtAccessTtl: 15m
+  mysqlTlsServerName: MySQL_Endpoint_Server
+  mysqlMaxOpenConns: "5"
+  mysqlMaxIdleConns: "2"
+  rabbitmqExchange: finsights.events
+  rabbitmqUserQueue: user.account-created
+
+services:
+  api-gateway:
+    enabled: true
+    replicas: 1
+    servicePort: 8080
+    containerPorts:
+      - name: http
+        port: 8080
+    env:
+      - name: GATEWAY_HTTP_ADDR
+        value: ":8080"
+      - name: AUTH_SERVICE_ADDR
+        value: finsights-backend-auth-service:9091
+      - name: USER_SERVICE_ADDR
+        value: finsights-backend-user-service:9092
+      - name: MARKET_SERVICE_ADDR
+        value: finsights-backend-market-service:9093
+      - name: AI_SERVICE_ADDR
+        value: finsights-backend-ai-service:9094
+    secretEnv:
+      - name: JWT_SIGNING_KEY
+        key: JWT_SIGNING_KEY
+    probe:
+      type: http
+      port: http
+      path: /livez
+      readinessPath: /readyz
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+  auth-service:
+    enabled: true
+    replicas: 1
+    servicePort: 9091
+    mysql: true
+    containerPorts:
+      - name: grpc
+        port: 9091
+    env:
+      - name: AUTH_GRPC_ADDR
+        value: ":9091"
+    secretEnv:
+      - name: AUTH_MYSQL_DSN
+        key: AUTH_MYSQL_DSN
+      - name: JWT_SIGNING_KEY
+        key: JWT_SIGNING_KEY
+      - name: RABBITMQ_URL
+        key: RABBITMQ_URL
+    probe:
+      type: tcp
+      port: grpc
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+  user-service:
+    enabled: true
+    replicas: 1
+    servicePort: 9092
+    mysql: true
+    containerPorts:
+      - name: grpc
+        port: 9092
+    env:
+      - name: USER_GRPC_ADDR
+        value: ":9092"
+    secretEnv:
+      - name: USER_MYSQL_DSN
+        key: USER_MYSQL_DSN
+      - name: JWT_SIGNING_KEY
+        key: JWT_SIGNING_KEY
+      - name: RABBITMQ_URL
+        key: RABBITMQ_URL
+    probe:
+      type: tcp
+      port: grpc
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+  market-service:
+    enabled: true
+    replicas: 1
+    servicePort: 9093
+    mysql: true
+    containerPorts:
+      - name: grpc
+        port: 9093
+    env:
+      - name: MARKET_GRPC_ADDR
+        value: ":9093"
+    secretEnv:
+      - name: MARKET_MYSQL_DSN
+        key: MARKET_MYSQL_DSN
+    probe:
+      type: tcp
+      port: grpc
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+  ai-service:
+    enabled: true
+    replicas: 1
+    servicePort: 9094
+    containerPorts:
+      - name: grpc
+        port: 9094
+      - name: http
+        port: 8081
+    probe:
+      type: http
+      port: http
+      path: /healthz
+      readinessPath: /healthz
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+ingress:
+  enabled: false
+  className: nginx
+  host: api.finsights.biz
+  path: /
+  pathType: Prefix
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""

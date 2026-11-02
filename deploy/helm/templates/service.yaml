@@ -1,0 +1,23 @@
+{{- $fullname := include "finsights-backend.fullname" . -}}
+{{- range $name, $service := .Values.services }}
+{{- if $service.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-%s" $fullname $name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "finsights-backend.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: {{ $name }}
+  ports:
+    - name: {{ if eq $name "api-gateway" }}http{{ else }}grpc{{ end }}
+      port: {{ $service.servicePort }}
+      targetPort: {{ if eq $name "api-gateway" }}http{{ else }}grpc{{ end }}
+      protocol: TCP
+{{- end }}
+{{- end }}
