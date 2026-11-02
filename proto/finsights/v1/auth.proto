@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package finsights.v1;
+
+option go_package = "github.com/minhphu05/finsights-backend/gen/go/finsights/v1;finsightsv1";
+
+service AuthService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Login(LoginRequest) returns (LoginResponse);
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+  string display_name = 3;
+}
+
+message RegisterResponse {
+  string account_id = 1;
+  string provisioning_status = 2;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string account_id = 1;
+  string email = 2;
+  string access_token = 3;
+  int64 expires_at_unix_ms = 4;
+}

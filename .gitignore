@@ -1,0 +1,7 @@
+.tools/
+gen/go/
+services/ai/generated/
+services/ai/__pycache__/
+services/ai/.venv/
+.env
+*.log

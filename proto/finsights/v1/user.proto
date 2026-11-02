@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package finsights.v1;
+
+option go_package = "github.com/minhphu05/finsights-backend/gen/go/finsights/v1;finsightsv1";
+
+service UserService {
+  rpc GetProfile(GetProfileRequest) returns (UserProfile);
+  rpc UpdateProfile(UpdateProfileRequest) returns (UserProfile);
+  rpc ListWatchlist(ListWatchlistRequest) returns (ListWatchlistResponse);
+  rpc AddWatchlistSymbol(ChangeWatchlistRequest) returns (ListWatchlistResponse);
+  rpc RemoveWatchlistSymbol(ChangeWatchlistRequest) returns (ListWatchlistResponse);
+}
+
+message GetProfileRequest {}
+
+message UpdateProfileRequest {
+  string display_name = 1;
+}
+
+message UserProfile {
+  string account_id = 1;
+  string display_name = 2;
+  int64 created_at_unix_ms = 3;
+  int64 updated_at_unix_ms = 4;
+}
+
+message ListWatchlistRequest {}
+
+message ListWatchlistResponse {
+  repeated string symbols = 1;
+}
+
+message ChangeWatchlistRequest {
+  string symbol = 1;
+}

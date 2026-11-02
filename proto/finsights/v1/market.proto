@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package finsights.v1;
+
+option go_package = "github.com/minhphu05/finsights-backend/gen/go/finsights/v1;finsightsv1";
+
+service MarketService {
+  rpc ListStocks(ListStocksRequest) returns (ListStocksResponse);
+  rpc GetStock(GetStockRequest) returns (Stock);
+  rpc GetStockCandles(GetStockCandlesRequest) returns (GetStockCandlesResponse);
+  rpc ListIndices(ListIndicesRequest) returns (ListIndicesResponse);
+  rpc ListNews(ListNewsRequest) returns (ListNewsResponse);
+  rpc GetNews(GetNewsRequest) returns (NewsArticle);
+}
+
+message ListStocksRequest {
+  string query = 1;
+  string exchange = 2;
+  string sector = 3;
+  uint32 limit = 4;
+  uint32 offset = 5;
+}
+
+message ListStocksResponse {
+  repeated Stock stocks = 1;
+  uint64 total = 2;
+}
+
+message GetStockRequest { string symbol = 1; }
+
+message Stock {
+  string symbol = 1;
+  string name = 2;
+  string short_name = 3;
+  string sector = 4;
+  string exchange = 5;
+  string price = 6;
+  string change = 7;
+  string volume = 8;
+  string market_cap = 9;
+  int64 quote_at_unix_ms = 10;
+}
+
+message GetStockCandlesRequest {
+  string symbol = 1;
+  string range = 2;
+  uint32 limit = 3;
+}
+
+message Candle {
+  int64 time_unix_ms = 1;
+  string open = 2;
+  string high = 3;
+  string low = 4;
+  string close = 5;
+  string volume = 6;
+}
+
+message GetStockCandlesResponse { repeated Candle candles = 1; }
+
+message ListIndicesRequest {}
+
+message MarketIndex {
+  string symbol = 1;
+  string name = 2;
+  string value = 3;
+  string change = 4;
+  string change_percent = 5;
+  string exchange = 6;
+  string volume = 7;
+  int64 quote_at_unix_ms = 8;
+}
+
+message ListIndicesResponse { repeated MarketIndex indices = 1; }
+
+message ListNewsRequest {
+  string symbol = 1;
+  string category = 2;
+  string query = 3;
+  uint32 limit = 4;
+  uint32 offset = 5;
+}
+
+message ListNewsResponse {
+  repeated NewsArticle articles = 1;
+  uint64 total = 2;
+}
+
+message GetNewsRequest { string slug = 1; }
+
+message NewsArticle {
+  string slug = 1;
+  string title = 2;
+  string description = 3;
+  string category = 4;
+  repeated string symbols = 5;
+  string image_url = 6;
+  string source_name = 7;
+  string source_url = 8;
+  int64 published_at_unix_ms = 9;
+  string body_markdown = 10;
+}

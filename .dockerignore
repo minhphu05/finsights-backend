@@ -1,0 +1,6 @@
+.git
+.tools
+.env
+*.log
+services/ai/.venv
+services/ai/__pycache__

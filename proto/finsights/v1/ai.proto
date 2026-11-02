@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package finsights.v1;
+
+option go_package = "github.com/minhphu05/finsights-backend/gen/go/finsights/v1;finsightsv1";
+
+service AIService {
+  rpc Ask(AIAskRequest) returns (AIAskResponse);
+}
+
+message AIAskRequest {
+  string user_id = 1;
+  string session_id = 2;
+  string message = 3;
+}
+
+message AIAskResponse {
+  string session_id = 1;
+  string answer = 2;
+  repeated string stock_symbols = 3;
+  repeated string article_slugs = 4;
+}
