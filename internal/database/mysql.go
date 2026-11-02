@@ -5,7 +5,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"encoding/asn1"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -32,10 +35,21 @@ func Open(ctx context.Context, dsn string, maxOpen, maxIdle int) (*sql.DB, error
 	if !roots.AppendCertsFromPEM(caPEM) {
 		return nil, fmt.Errorf("MySQL CA file contains no valid certificates")
 	}
+	serverName := os.Getenv("MYSQL_TLS_SERVER_NAME")
+	if serverName == "" {
+		serverName, _, err = net.SplitHostPort(config.Addr)
+		if err != nil {
+			serverName = config.Addr
+		}
+	}
 	config.TLS = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    roots,
-		ServerName: os.Getenv("MYSQL_TLS_SERVER_NAME"),
+		MinVersion:         tls.VersionTLS12,
+		RootCAs:            roots,
+		ServerName:         serverName,
+		InsecureSkipVerify: true, // VerifyConnection below validates the chain and server name.
+		VerifyConnection: func(state tls.ConnectionState) error {
+			return verifyServerCertificate(state, roots, serverName)
+		},
 	}
 	config.ParseTime = true
 	connector, err := mysql.NewConnector(config)
@@ -55,4 +69,45 @@ func Open(ctx context.Context, dsn string, maxOpen, maxIdle int) (*sql.DB, error
 		return nil, fmt.Errorf("ping mysql: %w", err)
 	}
 	return db, nil
+}
+
+var subjectAltNameOID = asn1.ObjectIdentifier{2, 5, 29, 17}
+
+// verifyServerCertificate validates the trusted chain and uses SAN hostname
+// checks. OCI's current MySQL endpoint certificate has no SAN, so only that
+// legacy form falls back to an exact Common Name match.
+func verifyServerCertificate(state tls.ConnectionState, roots *x509.CertPool, serverName string) error {
+	if len(state.PeerCertificates) == 0 {
+		return errors.New("MySQL server did not present a certificate")
+	}
+	leaf := state.PeerCertificates[0]
+	intermediates := x509.NewCertPool()
+	for _, certificate := range state.PeerCertificates[1:] {
+		intermediates.AddCert(certificate)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}); err != nil {
+		return fmt.Errorf("verify MySQL certificate chain: %w", err)
+	}
+
+	hasSAN := false
+	for _, extension := range leaf.Extensions {
+		if extension.Id.Equal(subjectAltNameOID) {
+			hasSAN = true
+			break
+		}
+	}
+	if hasSAN {
+		if err := leaf.VerifyHostname(serverName); err != nil {
+			return fmt.Errorf("verify MySQL certificate name: %w", err)
+		}
+		return nil
+	}
+	if leaf.Subject.CommonName != serverName {
+		return fmt.Errorf("verify MySQL legacy certificate common name: expected %q, got %q", serverName, leaf.Subject.CommonName)
+	}
+	return nil
 }

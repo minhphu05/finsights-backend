@@ -75,7 +75,7 @@ Before the first sync, create the Kubernetes Secret `finsights-backend-secrets` 
 | `JWT_SIGNING_KEY` | gateway, auth, user | Random value of at least 32 bytes; use the same value for all three |
 | `RABBITMQ_URL` | auth, user | `amqp://admin:<encoded-password>@rabbitmq.finsights-platform.svc.cluster.local:5672/` |
 
-The DSNs must use TLS. The services enforce TLS 1.2+ and verify the MySQL certificate using the public Node 1 CA bundled in the chart; configure the certificate DNS name with `MYSQL_TLS_SERVER_NAME` if the database is reached through an IP address. Keep actual DSN passwords and the JWT key in the Kubernetes Secret only, never in Helm values or GitHub Actions logs.
+The DSNs must use TLS. The services enforce TLS 1.2+ and verify the MySQL certificate chain using the public Node 1 CA bundled in the chart. OCI's current server certificate has no SAN, so the verifier requires an exact certificate Common Name match for this legacy certificate; certificates with SAN use normal SAN hostname verification. Configure `MYSQL_TLS_SERVER_NAME` if the database is reached through an IP address. Keep actual DSN passwords and the JWT key in the Kubernetes Secret only, never in Helm values or GitHub Actions logs.
 
 All five published GHCR packages are public, so K3s can pull them without a registry token or Kubernetes image pull Secret.
 
