@@ -77,7 +77,7 @@ Before the first sync, create the Kubernetes Secret `finsights-backend-secrets` 
 
 The DSNs must use TLS. The services enforce TLS 1.2+ and verify the MySQL certificate using the public Node 1 CA bundled in the chart; configure the certificate DNS name with `MYSQL_TLS_SERVER_NAME` if the database is reached through an IP address. Keep actual DSN passwords and the JWT key in the Kubernetes Secret only, never in Helm values or GitHub Actions logs.
 
-GHCR packages are private by default. Either make the five published packages public, or create an image pull Secret named `ghcr-pull-secret` in `finsights-platform` using a GitHub token with `read:packages`, then set `image.pullSecrets: [{name: ghcr-pull-secret}]` in `deploy/helm/values.yaml`. The backend source repository is public, but GHCR package visibility is configured separately.
+All five published GHCR packages are public, so K3s can pull them without a registry token or Kubernetes image pull Secret.
 
 The frontend repository currently serves mock market/news data and browser-local watchlists; it does not call this API yet. After the internal deployment is healthy, configure the gateway Ingress and Tunnel origin, then point the frontend at the API and allow its origin through `CORS_ALLOWED_ORIGINS`.
 
