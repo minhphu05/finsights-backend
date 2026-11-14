@@ -73,11 +73,18 @@ spec:
             {{- end }}
           {{- end }}
           {{- end }}
-          {{- if $service.mysql }}
+          {{- if or $service.mysql $service.mysqlNode2 }}
           volumeMounts:
+            {{- if $service.mysql }}
             - name: mysql-ca
               mountPath: /etc/finsights/mysql
               readOnly: true
+            {{- end }}
+            {{- if $service.mysqlNode2 }}
+            - name: mysql-node-2-ca
+              mountPath: /etc/finsights/mysql-node-2
+              readOnly: true
+            {{- end }}
           {{- end }}
           {{- if eq $service.probe.type "http" }}
           startupProbe:
@@ -117,14 +124,24 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $service.resources | nindent 12 }}
-      {{- if $service.mysql }}
+      {{- if or $service.mysql $service.mysqlNode2 }}
       volumes:
+        {{- if $service.mysql }}
         - name: mysql-ca
           configMap:
             name: {{ $fullname }}-mysql-ca
             items:
               - key: ca.pem
                 path: ca.pem
+        {{- end }}
+        {{- if $service.mysqlNode2 }}
+        - name: mysql-node-2-ca
+          configMap:
+            name: {{ $fullname }}-mysql-node-2-ca
+            items:
+              - key: ca.pem
+                path: ca.pem
+        {{- end }}
       {{- end }}
 {{- end }}
 {{- end }}

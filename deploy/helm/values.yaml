@@ -55,7 +55,7 @@ services:
     enabled: true
     replicas: 1
     servicePort: 9091
-    mysql: true
+    mysqlNode2: true
     containerPorts:
       - name: grpc
         containerPort: 9091
@@ -84,7 +84,7 @@ services:
     enabled: true
     replicas: 1
     servicePort: 9092
-    mysql: true
+    mysqlNode2: true
     containerPorts:
       - name: grpc
         containerPort: 9092
@@ -113,7 +113,7 @@ services:
     enabled: true
     replicas: 1
     servicePort: 9093
-    mysql: true
+    mysqlNode2: true
     containerPorts:
       - name: grpc
         containerPort: 9093
