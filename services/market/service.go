@@ -239,12 +239,12 @@ func (s *Service) ListIndices(ctx context.Context, _ *finsightsv1.ListIndicesReq
 func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsRequest) (*finsightsv1.ListNewsResponse, error) {
 	where, args := newsFilters(request)
 	var total uint64
-	if err := s.newsDB.QueryRowContext(ctx, `SELECT COUNT(DISTINCT a.id) `+articleFrom+where, args...).Scan(&total); err != nil {
+	if err := s.newsDB.QueryRowContext(ctx, `SELECT COUNT(DISTINCT a.id) `+articleFrom+` `+where, args...).Scan(&total); err != nil {
 		slog.ErrorContext(ctx, "news count query failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	limit, offset := pageBounds(request.GetLimit(), request.GetOffset(), 100, 20)
-	query := articleSelect + articleFrom + where + `
+	query := articleSelect + articleFrom + ` ` + where + `
 		GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC LIMIT ? OFFSET ?`
 	rows, err := s.newsDB.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
