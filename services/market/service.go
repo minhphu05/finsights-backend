@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -239,6 +240,7 @@ func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsReq
 	where, args := newsFilters(request)
 	var total uint64
 	if err := s.newsDB.QueryRowContext(ctx, `SELECT COUNT(DISTINCT a.id) `+articleFrom+where, args...).Scan(&total); err != nil {
+		slog.ErrorContext(ctx, "news count query failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	limit, offset := pageBounds(request.GetLimit(), request.GetOffset(), 100, 20)
@@ -246,6 +248,7 @@ func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsReq
 		GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC LIMIT ? OFFSET ?`
 	rows, err := s.newsDB.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
+		slog.ErrorContext(ctx, "news list query failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	defer rows.Close()
@@ -253,11 +256,13 @@ func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsReq
 	for rows.Next() {
 		article, err := scanArticle(rows)
 		if err != nil {
+			slog.ErrorContext(ctx, "news row scan failed", "error", err)
 			return nil, status.Error(codes.Internal, "could not read news")
 		}
 		response.Articles = append(response.Articles, article)
 	}
 	if err := rows.Err(); err != nil {
+		slog.ErrorContext(ctx, "news rows failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	return response, nil
@@ -389,15 +394,17 @@ func (s *Service) ListFinancialDocuments(ctx context.Context, request *finsights
 	}
 	var total uint64
 	if err := s.disclosuresDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM issuer_disclosures d `+where, args...).Scan(&total); err != nil {
+		slog.ErrorContext(ctx, "financial document count query failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "financial documents are unavailable")
 	}
 	query := `SELECT d.disclosure_uid,COALESCE(d.company_uid,''),COALESCE(d.security_uid,''),d.source_code,d.disclosure_kind,d.title,COALESCE(d.summary,''),
-		COALESCE(UNIX_TIMESTAMP(d.published_at)*1000,0),COALESCE(d.original_url,''),
+		COALESCE(CAST(UNIX_TIMESTAMP(d.published_at)*1000 AS UNSIGNED),0),COALESCE(d.original_url,''),
 		COALESCE(d.mime_type,''),COALESCE(d.document_asset_uid,''),d.rights_status
 		FROM issuer_disclosures d ` + where + ` ORDER BY d.published_at DESC,d.id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	rows, err := s.disclosuresDB.QueryContext(ctx, query, args...)
 	if err != nil {
+		slog.ErrorContext(ctx, "financial document list query failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "financial documents are unavailable")
 	}
 	defer rows.Close()
@@ -413,11 +420,13 @@ func (s *Service) ListFinancialDocuments(ctx context.Context, request *finsights
 		var companyUID, securityUID string
 		if err := rows.Scan(&doc.Uid, &companyUID, &securityUID, &doc.SourceCode, &doc.Kind, &doc.Title, &doc.Summary, &doc.PublishedAtUnixMs,
 			&doc.OriginalUrl, &doc.MimeType, &doc.DocumentAssetUid, &doc.RightsStatus); err != nil {
+			slog.ErrorContext(ctx, "financial document row scan failed", "error", err)
 			return nil, status.Error(codes.Internal, "could not read financial documents")
 		}
 		documents = append(documents, documentRow{document: doc, companyUID: companyUID, securityUID: securityUID})
 	}
 	if err := rows.Err(); err != nil {
+		slog.ErrorContext(ctx, "financial document rows failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "financial documents are unavailable")
 	}
 	if symbol == "" {
