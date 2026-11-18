@@ -244,7 +244,7 @@ func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsReq
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	limit, offset := pageBounds(request.GetLimit(), request.GetOffset(), 100, 20)
-	query := articleSelect + articleFrom + ` ` + where + `
+	query := articleSelect + ` ` + articleFrom + ` ` + where + `
 		GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC LIMIT ? OFFSET ?`
 	rows, err := s.newsDB.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
@@ -273,7 +273,7 @@ func (s *Service) GetNews(ctx context.Context, request *finsightsv1.GetNewsReque
 	if slug == "" {
 		return nil, status.Error(codes.InvalidArgument, "article slug is required")
 	}
-	query := articleSelect + articleFrom + ` WHERE a.article_status='published' AND
+	query := articleSelect + ` ` + articleFrom + ` WHERE a.article_status='published' AND
 		(a.slug=? OR CONCAT(pub.code,'-',LOWER(SUBSTRING(SHA2(a.canonical_url,256),1,20)))=?)
 		GROUP BY a.id,pub.code LIMIT 1`
 	article, err := scanArticle(s.newsDB.QueryRowContext(ctx, query, slug, slug))
