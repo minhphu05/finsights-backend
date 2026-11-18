@@ -60,6 +60,7 @@ spec:
                 secretKeyRef:
                   name: {{ $root.Values.secretName }}
                   key: {{ .key }}
+                  optional: {{ .optional | default false }}
             {{- end }}
           {{- else }}
           {{- with $service.secretEnv }}
@@ -70,10 +71,11 @@ spec:
                 secretKeyRef:
                   name: {{ $root.Values.secretName }}
                   key: {{ .key }}
+                  optional: {{ .optional | default false }}
             {{- end }}
           {{- end }}
           {{- end }}
-          {{- if or $service.mysql $service.mysqlNode2 }}
+          {{- if or $service.mysql $service.mysqlNode2 $service.oracleWalletSecretName }}
           volumeMounts:
             {{- if $service.mysql }}
             - name: mysql-ca
@@ -83,6 +85,11 @@ spec:
             {{- if $service.mysqlNode2 }}
             - name: mysql-node-2-ca
               mountPath: /etc/finsights/mysql-node-2
+              readOnly: true
+            {{- end }}
+            {{- if $service.oracleWalletSecretName }}
+            - name: oracle-wallet
+              mountPath: /etc/finsights/oracle-wallet
               readOnly: true
             {{- end }}
           {{- end }}
@@ -124,7 +131,7 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $service.resources | nindent 12 }}
-      {{- if or $service.mysql $service.mysqlNode2 }}
+      {{- if or $service.mysql $service.mysqlNode2 $service.oracleWalletSecretName }}
       volumes:
         {{- if $service.mysql }}
         - name: mysql-ca
@@ -141,6 +148,12 @@ spec:
             items:
               - key: ca.pem
                 path: ca.pem
+        {{- end }}
+        {{- if $service.oracleWalletSecretName }}
+        - name: oracle-wallet
+          secret:
+            secretName: {{ $service.oracleWalletSecretName | quote }}
+            optional: true
         {{- end }}
       {{- end }}
 {{- end }}

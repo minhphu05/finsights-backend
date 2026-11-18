@@ -5,11 +5,12 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/deploy.yml'
+      - 'deploy/helm/**'
       - 'cmd/**'
       - 'internal/**'
       - 'proto/**'
       - 'services/**'
-      - 'Dockerfile.go'
+      - 'Dockerfile'
       - '.dockerignore'
       - 'go.mod'
       - 'go.sum'
@@ -17,11 +18,12 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/deploy.yml'
+      - 'deploy/helm/**'
       - 'cmd/**'
       - 'internal/**'
       - 'proto/**'
       - 'services/**'
-      - 'Dockerfile.go'
+      - 'Dockerfile'
       - '.dockerignore'
       - 'go.mod'
       - 'go.sum'
@@ -35,23 +37,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Protocol Buffers compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes protobuf-compiler
+      - name: Generate Go RPC types
+        run: make generate-go
+      - name: Run API and service tests
+        run: go test ./...
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - image: api-gateway
-            dockerfile: Dockerfile.go
+            dockerfile: Dockerfile
             build_arg: api-gateway
           - image: auth-service
-            dockerfile: Dockerfile.go
+            dockerfile: Dockerfile
             build_arg: auth-service
           - image: user-service
-            dockerfile: Dockerfile.go
+            dockerfile: Dockerfile
             build_arg: user-service
           - image: market-service
-            dockerfile: Dockerfile.go
+            dockerfile: Dockerfile
             build_arg: market-service
           - image: ai-service
             dockerfile: services/ai/Dockerfile

@@ -42,7 +42,9 @@ func main() {
 		User:   finsightsv1.NewUserServiceClient(userConn),
 		Market: finsightsv1.NewMarketServiceClient(marketConn),
 		AI:     finsightsv1.NewAIServiceClient(aiConn),
-	}, []byte(key), issuer, strings.Split(config.String("CORS_ALLOWED_ORIGINS", ""), ","))
+	}, []byte(key), issuer, strings.Split(config.String("CORS_ALLOWED_ORIGINS", ""), ","),
+		config.String("AI_HTTP_SERVICE_ADDR", "http://ai-service:8081"))
+
 	addr := config.String("GATEWAY_HTTP_ADDR", ":8080")
 	server := &http.Server{Addr: addr, Handler: router.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	serverErr := make(chan error, 1)

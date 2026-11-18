@@ -7,7 +7,8 @@ image:
 secretName: finsights-backend-secrets
 
 config:
-  corsAllowedOrigins: ""
+  corsAllowedOrigins: "https://finsights-frontend-git-main-minhphu.vercel.app,http://localhost:3000"
+  googleOAuthClientId: "1023695913206-ls0utf87gs2a0n4cenc157ia4uho4fep.apps.googleusercontent.com"
   jwtIssuer: finsights-auth
   jwtAccessTtl: 15m
   mysqlTlsServerName: MySQL_Endpoint_Server
@@ -35,6 +36,8 @@ services:
         value: finsights-backend-market-service:9093
       - name: AI_SERVICE_ADDR
         value: finsights-backend-ai-service:9094
+      - name: AI_HTTP_SERVICE_ADDR
+        value: http://finsights-backend-ai-service:8081
     secretEnv:
       - name: JWT_SIGNING_KEY
         key: JWT_SIGNING_KEY
@@ -121,8 +124,14 @@ services:
       - name: MARKET_GRPC_ADDR
         value: ":9093"
     secretEnv:
-      - name: MARKET_MYSQL_DSN
-        key: MARKET_MYSQL_DSN
+      - name: MARKET_DATA_MYSQL_DSN
+        key: MARKET_DATA_MYSQL_DSN
+      - name: NEWS_MYSQL_DSN
+        key: NEWS_MYSQL_DSN
+      - name: FUNDAMENTALS_MYSQL_DSN
+        key: FUNDAMENTALS_MYSQL_DSN
+      - name: DISCLOSURES_MYSQL_DSN
+        key: DISCLOSURES_MYSQL_DSN
     probe:
       type: tcp
       port: grpc
@@ -138,16 +147,97 @@ services:
     enabled: true
     replicas: 1
     servicePort: 9094
+    mysql: true
+    oracleWalletSecretName: finsights-ai-oracle-wallet
+    additionalServicePorts:
+      - name: http
+        port: 8081
+        targetPort: http
     containerPorts:
       - name: grpc
         containerPort: 9094
       - name: http
         containerPort: 8081
+    env:
+      - name: AI_GRPC_ADDR
+        value: 0.0.0.0:9094
+      - name: AI_LLM_BASE_URL
+        value: https://api.deepseek.com
+      - name: AI_LLM_MODEL
+        value: deepseek-flash
+      - name: AI_MAX_HISTORY_MESSAGES
+        value: "12"
+      - name: AI_MAX_TOOL_ROUNDS
+        value: "3"
+      - name: AI_MAX_TOOL_CALLS
+        value: "5"
+      - name: AI_MAX_REQUESTS_PER_MINUTE
+        value: "10"
+      - name: AI_MAX_CONCURRENT_TURNS
+        value: "2"
+      - name: AI_MAX_OUTPUT_TOKENS
+        value: "700"
+      - name: AI_LLM_TIMEOUT_SECONDS
+        value: "20"
+      - name: AI_TURN_TIMEOUT_SECONDS
+        value: "50"
+      - name: AI_MARKET_SERVICE_ADDR
+        value: finsights-backend-market-service:9093
+      - name: AI_USER_SERVICE_ADDR
+        value: finsights-backend-user-service:9092
+      - name: AI_MYSQL_HOST
+        value: 161.33.181.173
+      - name: AI_MYSQL_PORT
+        value: "3306"
+      - name: AI_MYSQL_DATABASE
+        value: finsights_ai
+      - name: AI_MYSQL_USER
+        value: finsights_ai_app
+      - name: AI_MYSQL_TLS_CA_FILE
+        value: /etc/finsights/mysql/ca.pem
+      - name: AI_MYSQL_TLS_VERIFY_IDENTITY
+        value: "false"
+      - name: AI_MYSQL_POOL_SIZE
+        value: "2"
+      - name: AI_RAG_ENABLED
+        value: "false"
+      - name: AI_VECTOR_DIMENSIONS
+        value: "1024"
+      - name: AI_ORACLE_WALLET_DIR
+        value: /etc/finsights/oracle-wallet
+      - name: AI_VOYAGE_API_URL
+        value: https://api.voyageai.com/v1/embeddings
+      - name: AI_VOYAGE_MODEL
+        value: voyage-4-lite
+    secretEnv:
+      - name: JWT_SIGNING_KEY
+        key: JWT_SIGNING_KEY
+      - name: AI_MYSQL_PASSWORD
+        key: AI_MYSQL_PASSWORD
+        optional: true
+      - name: AI_LLM_API_KEY
+        key: AI_LLM_API_KEY
+        optional: true
+      - name: AI_ORACLE_DSN
+        key: AI_ORACLE_DSN
+        optional: true
+      - name: AI_ORACLE_USER
+        key: AI_ORACLE_USER
+        optional: true
+      - name: AI_ORACLE_PASSWORD
+        key: AI_ORACLE_PASSWORD
+        optional: true
+      - name: AI_ORACLE_WALLET_PASSWORD
+        key: AI_ORACLE_WALLET_PASSWORD
+        optional: true
+      - name: VOYAGE_API_KEY
+        key: VOYAGE_API_KEY
+        optional: true
     probe:
       type: http
       port: http
       path: /healthz
-      readinessPath: /healthz
+      readinessPath: /readyz
     resources:
       requests:
         cpu: 50m
@@ -157,7 +247,7 @@ services:
         memory: 512Mi
 
 ingress:
-  enabled: false
+  enabled: true
   className: nginx
   host: api.finsights.biz
   path: /

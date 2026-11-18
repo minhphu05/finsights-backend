@@ -1,6 +1,6 @@
 # MySQL schema contract
 
-Migrations are intentionally not included here. The local infrastructure documentation assigns schema and migration ownership to `finsights-core-db`, and the user requested waiting for that repository. This file records only the tables and columns the service code expects so the migration can be implemented in the owning repo.
+MySQL database, table, column, user and migration definitions are owned by `finsights-coredb`. This file records the contracts the backend services expect so runtime SQL remains aligned with those managed schemas.
 
 All timestamps are UTC. Use parameterized SQL and decimal/integer types for market values. Each service receives a separate database/schema and least-privilege DB account through its own `*_MYSQL_DSN` secret.
 
@@ -27,7 +27,17 @@ The `account_id` comes from Auth and is provisioned by the RabbitMQ consumer. Re
 - `news_articles`: `id`, `slug` (unique), `title`, `description`, `category`, `image_url`, `source_name`, `source_url`, `published_at`, `body_markdown`.
 - `news_article_symbols`: unique (`article_id`, `symbol`), linking news to instruments.
 
-No market-data source or ingestion worker is selected yet. The schema must retain source attribution and quote timestamps so the UI can distinguish fresh data from stale data when ingestion is added.
+The current Vietstock DataFeed collector writes market quote/index snapshots and daily rows through the Node 2 market account. It retains provider codes and observation timestamps so the UI can distinguish fresh data from stale data. New feeds should write normalized source data to their domain database and keep this API-facing contract stable until MarketService is extended.
+
+## AI chat history schema (MySQL Node 1)
+
+`finsights_ai` is provisioned by `finsights-coredb/mysql-node-1`. Its schema is unchanged. `chat_sessions` stores the stable UUID exposed to clients, the authenticated account identifier in `user_uid`, session title/provider/status and timestamps. `chat_messages` stores ordered user/assistant turns, completion status, model name, token counts and a non-sensitive error code. Reads and session closure always filter by both `session_uid` and the user identifier derived from the verified JWT. `user_uid` is the current numeric Auth account ID stored as a string; this database intentionally has no cross-database foreign key.
+
+The existing Auth, User, and Market service schemas are provisioned on MySQL Node 2. Their service contracts are unchanged; only endpoint placement and TLS CA selection change.
+
+## AI knowledge schema (Oracle Autonomous Database)
+
+`services/ai/sql/001_oracle_knowledge_chunks.sql` creates `ai_knowledge_chunks` in a dedicated least-privilege Oracle schema. The service stores normalized news chunks, source URL/title/published time, content hashes, metadata and `VECTOR(1024,FLOAT32)` embeddings. Vector width must match the configured Voyage model output. The initial implementation performs exact cosine-distance scans; index creation is deferred until measured corpus size and latency justify it. Chat transcripts and user IDs are not copied into this vector table.
 
 ## RabbitMQ event contract
 

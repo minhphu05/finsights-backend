@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,15 +24,21 @@ type Clients struct {
 }
 
 type Router struct {
-	clients Clients
-	jwtKey  []byte
-	issuer  string
-	api     *gin.Engine
+	clients       Clients
+	jwtKey        []byte
+	issuer        string
+	aiHTTPBaseURL string
+	aiHTTPClient  *http.Client
+	api           *gin.Engine
 }
 
-func New(clients Clients, jwtKey []byte, issuer string, allowedOrigins []string) *Router {
+func New(clients Clients, jwtKey []byte, issuer string, allowedOrigins []string, aiHTTPBaseURL string) *Router {
 	gin.SetMode(gin.ReleaseMode)
-	router := &Router{clients: clients, jwtKey: jwtKey, issuer: issuer, api: gin.New()}
+	router := &Router{
+		clients: clients, jwtKey: jwtKey, issuer: issuer, api: gin.New(),
+		aiHTTPBaseURL: strings.TrimRight(aiHTTPBaseURL, "/"),
+		aiHTTPClient:  &http.Client{Timeout: 15 * time.Second},
+	}
 	router.api.Use(gin.Recovery())
 	router.api.Use(corsMiddleware(allowedOrigins))
 	router.api.Use(func(c *gin.Context) {
@@ -43,13 +51,22 @@ func New(clients Clients, jwtKey []byte, issuer string, allowedOrigins []string)
 	v1 := router.api.Group("/api/v1")
 	v1.POST("/auth/register", router.register)
 	v1.POST("/auth/login", router.login)
+	v1.POST("/auth/google", router.googleLogin)
 	v1.GET("/stocks", router.listStocks)
 	v1.GET("/stocks/:symbol", router.getStock)
 	v1.GET("/stocks/:symbol/candles", router.stockCandles)
+	v1.GET("/indices/:symbol/candles", router.indexCandles)
+	v1.GET("/stocks/:symbol/financials", router.getStockFinancials)
+	v1.GET("/stocks/:symbol/disclosures", router.listStockDisclosures)
+	v1.GET("/financial-reports", router.listFinancialDocuments)
 	v1.GET("/indices", router.listIndices)
 	v1.GET("/news", router.listNews)
 	v1.GET("/news/:slug", router.getNews)
-	v1.POST("/ai/chat", router.askAI)
+	ai := v1.Group("/ai", router.requireJWT())
+	ai.POST("/chat", router.askAI)
+	ai.GET("/sessions", router.listAISessions)
+	ai.GET("/sessions/:session_id/messages", router.getAISessionMessages)
+	ai.DELETE("/sessions/:session_id", router.deleteAISession)
 
 	private := v1.Group("/users/me", router.requireJWT())
 	private.GET("", router.getProfile)
@@ -87,6 +104,24 @@ func (r *Router) login(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	response, err := r.clients.Auth.Login(ctx, &body)
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) googleLogin(c *gin.Context) {
+	var body struct {
+		IDToken string `json:"id_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "Google ID token is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+	defer cancel()
+	response, err := r.clients.Auth.GoogleLogin(ctx, &finsightsv1.GoogleLoginRequest{IdToken: body.IDToken})
 	if err != nil {
 		writeRPCError(c, err)
 		return
@@ -132,6 +167,76 @@ func (r *Router) stockCandles(c *gin.Context) {
 	defer cancel()
 	response, err := r.clients.Market.GetStockCandles(ctx, &finsightsv1.GetStockCandlesRequest{
 		Symbol: strings.ToUpper(c.Param("symbol")), Range: c.DefaultQuery("range", "1M"), Limit: limit,
+	})
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) indexCandles(c *gin.Context) {
+	limit, err := parseUint(c.DefaultQuery("limit", "90"), 1000)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	response, err := r.clients.Market.GetIndexCandles(ctx, &finsightsv1.GetIndexCandlesRequest{
+		Symbol: strings.ToUpper(c.Param("symbol")), Range: c.DefaultQuery("range", "1M"), Limit: limit,
+	})
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) getStockFinancials(c *gin.Context) {
+	limit, err := parseUint(c.DefaultQuery("limit", "24"), 100)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+	defer cancel()
+	response, err := r.clients.Market.GetStockFinancials(ctx, &finsightsv1.GetStockFinancialsRequest{
+		Symbol: strings.ToUpper(c.Param("symbol")), PeriodType: c.Query("period_type"), Limit: limit,
+	})
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) listFinancialDocuments(c *gin.Context) {
+	limit, offset, ok := pagination(c)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+	defer cancel()
+	response, err := r.clients.Market.ListFinancialDocuments(ctx, &finsightsv1.ListFinancialDocumentsRequest{
+		Symbol: strings.ToUpper(c.Query("symbol")), Kind: c.Query("kind"), Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) listStockDisclosures(c *gin.Context) {
+	limit, offset, ok := pagination(c)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+	defer cancel()
+	response, err := r.clients.Market.ListFinancialDocuments(ctx, &finsightsv1.ListFinancialDocumentsRequest{
+		Symbol: strings.ToUpper(c.Param("symbol")), Kind: c.Query("kind"), Limit: limit, Offset: offset,
 	})
 	if err != nil {
 		writeRPCError(c, err)
@@ -255,20 +360,19 @@ func (r *Router) askAI(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if authHeader := c.GetHeader("Authorization"); authHeader != "" {
-		token, ok := security.BearerValue(authHeader)
-		if !ok {
-			writeError(c, http.StatusUnauthorized, "invalid bearer token")
-			return
-		}
-		identity, err := security.Parse(r.jwtKey, r.issuer, token)
-		if err != nil {
-			writeError(c, http.StatusUnauthorized, "invalid access token")
-			return
-		}
-		body.UserId = identity.AccountID
+	token, ok := security.BearerValue(c.GetHeader("Authorization"))
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "bearer token required")
+		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	identity, err := security.Parse(r.jwtKey, r.issuer, token)
+	if err != nil {
+		writeError(c, http.StatusUnauthorized, "invalid access token")
+		return
+	}
+	body.UserId = identity.AccountID
+	ctx := security.ForwardBearer(c.Request.Context(), c.GetHeader("Authorization"))
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	response, err := r.clients.AI.Ask(ctx, &body)
 	if err != nil {
@@ -276,6 +380,67 @@ func (r *Router) askAI(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) listAISessions(c *gin.Context) {
+	limit, err := parseUint(c.DefaultQuery("limit", "20"), 50)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	offset, err := parseUint(c.DefaultQuery("offset", "0"), 1000)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid offset")
+		return
+	}
+	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions?limit="+strconv.FormatUint(uint64(limit), 10)+"&offset="+strconv.FormatUint(uint64(offset), 10))
+}
+
+func (r *Router) getAISessionMessages(c *gin.Context) {
+	sessionID := url.PathEscape(strings.TrimSpace(c.Param("session_id")))
+	if sessionID == "" {
+		writeError(c, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions/"+sessionID+"/messages?limit=100")
+}
+
+func (r *Router) deleteAISession(c *gin.Context) {
+	sessionID := url.PathEscape(strings.TrimSpace(c.Param("session_id")))
+	if sessionID == "" {
+		writeError(c, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	r.proxyAIHistory(c, http.MethodDelete, "/v1/sessions/"+sessionID)
+}
+
+func (r *Router) proxyAIHistory(c *gin.Context, method, path string) {
+	if r.aiHTTPBaseURL == "" {
+		writeError(c, http.StatusServiceUnavailable, "AI history service is unavailable")
+		return
+	}
+	request, err := http.NewRequestWithContext(c.Request.Context(), method, r.aiHTTPBaseURL+path, nil)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "could not create AI request")
+		return
+	}
+	request.Header.Set("Authorization", c.GetHeader("Authorization"))
+	response, err := r.aiHTTPClient.Do(request)
+	if err != nil {
+		writeError(c, http.StatusServiceUnavailable, "AI history service is unavailable")
+		return
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "could not read AI response")
+		return
+	}
+	contentType := response.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	c.Data(response.StatusCode, contentType, body)
 }
 
 func (r *Router) requireJWT() gin.HandlerFunc {
@@ -335,6 +500,8 @@ func writeRPCError(c *gin.Context, err error) {
 		statusCode = http.StatusGatewayTimeout
 	case codes.Unavailable, codes.FailedPrecondition:
 		statusCode = http.StatusServiceUnavailable
+	case codes.ResourceExhausted:
+		statusCode = http.StatusTooManyRequests
 	case codes.Unimplemented:
 		statusCode = http.StatusNotImplemented
 	}

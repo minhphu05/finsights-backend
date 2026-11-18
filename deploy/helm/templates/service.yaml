@@ -19,5 +19,11 @@ spec:
       port: {{ $service.servicePort }}
       targetPort: {{ if eq $name "api-gateway" }}http{{ else }}grpc{{ end }}
       protocol: TCP
+    {{- range $service.additionalServicePorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      targetPort: {{ .targetPort }}
+      protocol: TCP
+    {{- end }}
 {{- end }}
 {{- end }}

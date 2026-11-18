@@ -7,6 +7,7 @@ option go_package = "github.com/minhphu05/finsights-backend/gen/go/finsights/v1;
 service AuthService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Login(LoginRequest) returns (LoginResponse);
+  rpc GoogleLogin(GoogleLoginRequest) returns (LoginResponse);
 }
 
 message RegisterRequest {
@@ -23,6 +24,10 @@ message RegisterResponse {
 message LoginRequest {
   string email = 1;
   string password = 2;
+}
+
+message GoogleLoginRequest {
+  string id_token = 1;
 }
 
 message LoginResponse {

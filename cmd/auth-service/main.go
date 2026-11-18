@@ -43,7 +43,7 @@ func main() {
 	exchange := config.String("RABBITMQ_EXCHANGE", "finsights.events")
 	go messaging.RunOutboxRelay(ctx, db, rabbitURL, exchange, time.Second)
 
-	service := auth.New(db, []byte(key), issuer, ttl)
+	service := auth.New(db, []byte(key), issuer, ttl, config.String("GOOGLE_OAUTH_CLIENT_ID", ""))
 	addr := config.String("AUTH_GRPC_ADDR", ":9091")
 	slog.Info("starting auth service", "grpc_addr", addr)
 	must(grpcserver.Serve(ctx, addr, nil, func(server *grpc.Server) {

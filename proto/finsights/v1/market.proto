@@ -8,9 +8,12 @@ service MarketService {
   rpc ListStocks(ListStocksRequest) returns (ListStocksResponse);
   rpc GetStock(GetStockRequest) returns (Stock);
   rpc GetStockCandles(GetStockCandlesRequest) returns (GetStockCandlesResponse);
+  rpc GetIndexCandles(GetIndexCandlesRequest) returns (GetStockCandlesResponse);
   rpc ListIndices(ListIndicesRequest) returns (ListIndicesResponse);
   rpc ListNews(ListNewsRequest) returns (ListNewsResponse);
   rpc GetNews(GetNewsRequest) returns (NewsArticle);
+  rpc GetStockFinancials(GetStockFinancialsRequest) returns (GetStockFinancialsResponse);
+  rpc ListFinancialDocuments(ListFinancialDocumentsRequest) returns (ListFinancialDocumentsResponse);
 }
 
 message ListStocksRequest {
@@ -58,6 +61,12 @@ message Candle {
 
 message GetStockCandlesResponse { repeated Candle candles = 1; }
 
+message GetIndexCandlesRequest {
+  string symbol = 1;
+  string range = 2;
+  uint32 limit = 3;
+}
+
 message ListIndicesRequest {}
 
 message MarketIndex {
@@ -99,4 +108,67 @@ message NewsArticle {
   string source_url = 8;
   int64 published_at_unix_ms = 9;
   string body_markdown = 10;
+  string publisher_code = 11;
+}
+
+message GetStockFinancialsRequest {
+  string symbol = 1;
+  string period_type = 2;
+  uint32 limit = 3;
+}
+
+message FinancialValue {
+  string line_key = 1;
+  string source_label = 2;
+  string canonical_name = 3;
+  string statement_family = 4;
+  string metric_group = 5;
+  string value = 6;
+  string original_value = 7;
+  string unit = 8;
+  string unit_multiplier = 9;
+  string currency = 10;
+  uint32 row_order = 11;
+}
+
+message FinancialPeriod {
+  string period_code = 1;
+  uint32 fiscal_year = 2;
+  uint32 fiscal_quarter = 3;
+  string period_type = 4;
+  string period_end = 5;
+  string currency = 6;
+  string audit_status = 7;
+  repeated FinancialValue values = 8;
+}
+
+message GetStockFinancialsResponse {
+  string symbol = 1;
+  repeated FinancialPeriod periods = 2;
+}
+
+message ListFinancialDocumentsRequest {
+  string symbol = 1;
+  string kind = 2;
+  uint32 limit = 3;
+  uint32 offset = 4;
+}
+
+message FinancialDocument {
+  string uid = 1;
+  string symbol = 2;
+  string source_code = 3;
+  string kind = 4;
+  string title = 5;
+  string summary = 6;
+  int64 published_at_unix_ms = 7;
+  string original_url = 8;
+  string mime_type = 9;
+  string document_asset_uid = 10;
+  string rights_status = 11;
+}
+
+message ListFinancialDocumentsResponse {
+  repeated FinancialDocument documents = 1;
+  uint64 total = 2;
 }
