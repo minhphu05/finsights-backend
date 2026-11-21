@@ -15,10 +15,11 @@ func corsMiddleware(configured []string) gin.HandlerFunc {
 			allowed[origin] = struct{}{}
 		}
 	}
+	_, allowAnyOrigin := allowed["*"]
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		_, ok := allowed[origin]
-		if origin != "" && !ok {
+		if origin != "" && !ok && !allowAnyOrigin {
 			if c.Request.Method == http.MethodOptions {
 				c.AbortWithStatus(http.StatusForbidden)
 				return
@@ -26,12 +27,16 @@ func corsMiddleware(configured []string) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if ok {
-			c.Header("Access-Control-Allow-Origin", origin)
+		if origin != "" && (ok || allowAnyOrigin) {
+			if allowAnyOrigin {
+				c.Header("Access-Control-Allow-Origin", "*")
+			} else {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Vary", "Origin")
+			}
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
 			c.Header("Access-Control-Max-Age", "600")
-			c.Header("Vary", "Origin")
 		}
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

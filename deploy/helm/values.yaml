@@ -7,7 +7,7 @@ image:
 secretName: finsights-backend-secrets
 
 config:
-  corsAllowedOrigins: "https://finsights-frontend-git-main-minhphu.vercel.app,http://localhost:3000"
+  corsAllowedOrigins: "*"
   googleOAuthClientId: "1023695913206-ls0utf87gs2a0n4cenc157ia4uho4fep.apps.googleusercontent.com"
   jwtIssuer: finsights-auth
   jwtAccessTtl: 15m
