@@ -273,7 +273,7 @@ func (s *Service) GetNews(ctx context.Context, request *finsightsv1.GetNewsReque
 	if slug == "" {
 		return nil, status.Error(codes.InvalidArgument, "article slug is required")
 	}
-	query := articleSelect + ` ` + articleFrom + ` WHERE a.article_status='published' AND
+	query := articleDetailSelect + ` ` + articleFrom + ` WHERE a.article_status='published' AND
 		(a.slug=? OR CONCAT(pub.code,'-',LOWER(SUBSTRING(SHA2(a.canonical_url,256),1,20)))=?)
 		GROUP BY a.id,pub.code LIMIT 1`
 	article, err := scanArticle(s.newsDB.QueryRowContext(ctx, query, slug, slug))
@@ -296,6 +296,14 @@ const articleSelect = `SELECT COALESCE(NULLIF(a.slug,''),CONCAT(pub.code,'-',LOW
 	COALESCE(GROUP_CONCAT(DISTINCT ns.symbol_at_publication ORDER BY ns.symbol_at_publication SEPARATOR ','),''),
 	COALESCE(a.cover_image_url,''),pub.name,COALESCE(a.canonical_url,''),
 	COALESCE(UNIX_TIMESTAMP(a.published_at)*1000,0),'',pub.code`
+const articleDetailSelect = `SELECT COALESCE(NULLIF(a.slug,''),CONCAT(pub.code,'-',LOWER(SUBSTRING(SHA2(a.canonical_url,256),1,20)))),
+	a.title,COALESCE(a.summary,a.excerpt,''),COALESCE(MAX(cat.name),MAX(a.original_section),'Tin tức'),
+	COALESCE(GROUP_CONCAT(DISTINCT ns.symbol_at_publication ORDER BY ns.symbol_at_publication SEPARATOR ','),''),
+	COALESCE(a.cover_image_url,''),pub.name,COALESCE(a.canonical_url,''),
+	COALESCE(UNIX_TIMESTAMP(a.published_at)*1000,0),
+	CASE WHEN pub.content_rights='licensed_full_text' THEN COALESCE(
+		(SELECT content.body_plaintext FROM news_article_contents content WHERE content.article_id=a.id LIMIT 1), '')
+	ELSE '' END,pub.code`
 
 func (s *Service) GetStockFinancials(ctx context.Context, request *finsightsv1.GetStockFinancialsRequest) (*finsightsv1.GetStockFinancialsResponse, error) {
 	symbol := strings.ToUpper(strings.TrimSpace(request.GetSymbol()))
