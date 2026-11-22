@@ -249,7 +249,7 @@ services:
 ingress:
   enabled: true
   className: nginx
-  host: api.finsights.biz
+  host: finsights-prod-node-01.tail73ddb8.ts.net
   path: /
   pathType: Prefix
   annotations: {}
