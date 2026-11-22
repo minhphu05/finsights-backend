@@ -88,6 +88,7 @@ message ListNewsRequest {
   string query = 3;
   uint32 limit = 4;
   uint32 offset = 5;
+  string relevance = 6;
 }
 
 message ListNewsResponse {
@@ -109,6 +110,11 @@ message NewsArticle {
   int64 published_at_unix_ms = 9;
   string body_markdown = 10;
   string publisher_code = 11;
+  string financial_relevance = 12;
+  string topic_label = 13;
+  string quality_decision = 14;
+  double quality_confidence = 15;
+  string quality_reason = 16;
 }
 
 message GetStockFinancialsRequest {

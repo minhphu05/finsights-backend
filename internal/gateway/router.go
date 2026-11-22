@@ -264,7 +264,8 @@ func (r *Router) listNews(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	response, err := r.clients.Market.ListNews(ctx, &finsightsv1.ListNewsRequest{
-		Symbol: strings.ToUpper(c.Query("symbol")), Category: c.Query("category"), Query: c.Query("q"), Limit: limit, Offset: offset,
+		Symbol: strings.ToUpper(c.Query("symbol")), Category: c.Query("category"), Query: c.Query("q"),
+		Limit: limit, Offset: offset, Relevance: c.Query("relevance"),
 	})
 	if err != nil {
 		writeRPCError(c, err)

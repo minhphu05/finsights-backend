@@ -237,6 +237,10 @@ func (s *Service) ListIndices(ctx context.Context, _ *finsightsv1.ListIndicesReq
 }
 
 func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsRequest) (*finsightsv1.ListNewsResponse, error) {
+	relevance := strings.ToLower(strings.TrimSpace(request.GetRelevance()))
+	if relevance != "" && relevance != "financial" && relevance != "non_financial" && relevance != "needs_review" {
+		return nil, status.Error(codes.InvalidArgument, "relevance must be financial, non_financial, or needs_review")
+	}
 	where, args := newsFilters(request)
 	var total uint64
 	if err := s.newsDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM news_articles a `+where, args...).Scan(&total); err != nil {
@@ -250,9 +254,10 @@ func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsReq
 	) article_page
 	JOIN news_articles a ON a.id=article_page.id
 	JOIN news_publishers pub ON pub.id=a.publisher_id
-	LEFT JOIN news_article_securities ns ON ns.article_id=a.id
+		LEFT JOIN news_article_securities ns ON ns.article_id=a.id AND ns.review_status<>'rejected'
 	LEFT JOIN news_article_categories ac ON ac.article_id=a.id AND ac.is_primary=1
 	LEFT JOIN news_categories cat ON cat.id=ac.category_id
+		LEFT JOIN news_article_quality nq ON nq.article_id=a.id
 	GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC`
 	rows, err := s.newsDB.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
@@ -281,7 +286,7 @@ func (s *Service) GetNews(ctx context.Context, request *finsightsv1.GetNewsReque
 	if slug == "" {
 		return nil, status.Error(codes.InvalidArgument, "article slug is required")
 	}
-	query := articleDetailSelect + ` ` + articleFrom + ` WHERE a.article_status='published' AND
+	query := articleDetailSelect + ` ` + articleFrom + ` WHERE a.article_status IN ('published','quality_excluded','quality_review') AND
 		(a.slug=? OR CONCAT(pub.code,'-',LOWER(SUBSTRING(SHA2(a.canonical_url,256),1,20)))=?)
 		GROUP BY a.id,pub.code LIMIT 1`
 	article, err := scanArticle(s.newsDB.QueryRowContext(ctx, query, slug, slug))
@@ -296,14 +301,18 @@ func (s *Service) GetNews(ctx context.Context, request *finsightsv1.GetNewsReque
 
 const articleFrom = `FROM news_articles a
 	JOIN news_publishers pub ON pub.id=a.publisher_id
-	LEFT JOIN news_article_securities ns ON ns.article_id=a.id
+	LEFT JOIN news_article_securities ns ON ns.article_id=a.id AND ns.review_status<>'rejected'
 	LEFT JOIN news_article_categories ac ON ac.article_id=a.id AND ac.is_primary=1
-	LEFT JOIN news_categories cat ON cat.id=ac.category_id`
+	LEFT JOIN news_categories cat ON cat.id=ac.category_id
+	LEFT JOIN news_article_quality nq ON nq.article_id=a.id`
 const articleSelect = `SELECT COALESCE(NULLIF(a.slug,''),CONCAT(pub.code,'-',LOWER(SUBSTRING(SHA2(a.canonical_url,256),1,20)))),
 	a.title,COALESCE(a.summary,a.excerpt,''),COALESCE(MAX(cat.name),MAX(a.original_section),'Tin tức'),
 	COALESCE(GROUP_CONCAT(DISTINCT ns.symbol_at_publication ORDER BY ns.symbol_at_publication SEPARATOR ','),''),
 	COALESCE(a.cover_image_url,''),pub.name,COALESCE(a.canonical_url,''),
-	COALESCE(UNIX_TIMESTAMP(a.published_at)*1000,0),'',pub.code`
+	COALESCE(UNIX_TIMESTAMP(a.published_at)*1000,0),'',pub.code,
+	COALESCE(MAX(nq.financial_relevance),'needs_review'),COALESCE(MAX(nq.topic_label),'unclassified'),
+	COALESCE(MAX(nq.publication_decision),'review'),COALESCE(MAX(nq.confidence),0),
+	COALESCE(MAX(nq.reason_code),'not_yet_classified')`
 const articleDetailSelect = `SELECT COALESCE(NULLIF(a.slug,''),CONCAT(pub.code,'-',LOWER(SUBSTRING(SHA2(a.canonical_url,256),1,20)))),
 	a.title,COALESCE(a.summary,a.excerpt,''),COALESCE(MAX(cat.name),MAX(a.original_section),'Tin tức'),
 	COALESCE(GROUP_CONCAT(DISTINCT ns.symbol_at_publication ORDER BY ns.symbol_at_publication SEPARATOR ','),''),
@@ -311,7 +320,9 @@ const articleDetailSelect = `SELECT COALESCE(NULLIF(a.slug,''),CONCAT(pub.code,'
 	COALESCE(UNIX_TIMESTAMP(a.published_at)*1000,0),
 	CASE WHEN pub.content_rights='licensed_full_text' THEN COALESCE(
 		(SELECT content.body_plaintext FROM news_article_contents content WHERE content.article_id=a.id LIMIT 1), '')
-	ELSE '' END,pub.code`
+	ELSE '' END,pub.code,COALESCE(MAX(nq.financial_relevance),'needs_review'),
+	COALESCE(MAX(nq.topic_label),'unclassified'),COALESCE(MAX(nq.publication_decision),'review'),
+	COALESCE(MAX(nq.confidence),0),COALESCE(MAX(nq.reason_code),'not_yet_classified')`
 
 func (s *Service) GetStockFinancials(ctx context.Context, request *finsightsv1.GetStockFinancialsRequest) (*finsightsv1.GetStockFinancialsResponse, error) {
 	symbol := strings.ToUpper(strings.TrimSpace(request.GetSymbol()))
@@ -544,7 +555,8 @@ func scanArticle(scanner rowScanner) (*finsightsv1.NewsArticle, error) {
 	article := &finsightsv1.NewsArticle{}
 	var symbols string
 	err := scanner.Scan(&article.Slug, &article.Title, &article.Description, &article.Category, &symbols,
-		&article.ImageUrl, &article.SourceName, &article.SourceUrl, &article.PublishedAtUnixMs, &article.BodyMarkdown, &article.PublisherCode)
+		&article.ImageUrl, &article.SourceName, &article.SourceUrl, &article.PublishedAtUnixMs, &article.BodyMarkdown, &article.PublisherCode,
+		&article.FinancialRelevance, &article.TopicLabel, &article.QualityDecision, &article.QualityConfidence, &article.QualityReason)
 	if err != nil {
 		return nil, err
 	}
@@ -579,10 +591,32 @@ func stockFilters(request *finsightsv1.ListStocksRequest) (string, []any) {
 func newsFilters(request *finsightsv1.ListNewsRequest) (string, []any) {
 	clauses := []string{"a.article_status='published'", "(a.published_at IS NULL OR a.published_at<=UTC_TIMESTAMP(3))"}
 	args := []any{}
+	switch strings.ToLower(strings.TrimSpace(request.GetRelevance())) {
+	case "financial":
+		clauses = append(clauses, `EXISTS (
+			SELECT 1 FROM news_article_quality nq_filter
+			WHERE nq_filter.article_id=a.id AND nq_filter.financial_relevance='financial'
+				AND nq_filter.publication_decision='publish'
+		)`)
+	case "non_financial":
+		clauses = append(clauses, `EXISTS (
+			SELECT 1 FROM news_article_quality nq_filter
+			WHERE nq_filter.article_id=a.id
+				AND nq_filter.financial_relevance IN ('non_financial','needs_review')
+		)`)
+		clauses[0] = "a.article_status IN ('quality_excluded','quality_review')"
+	case "needs_review":
+		clauses = append(clauses, `EXISTS (
+			SELECT 1 FROM news_article_quality nq_filter
+			WHERE nq_filter.article_id=a.id AND nq_filter.financial_relevance='needs_review'
+		)`)
+		clauses[0] = "a.article_status='quality_review'"
+	}
 	if symbol := strings.ToUpper(strings.TrimSpace(request.GetSymbol())); symbol != "" {
 		clauses = append(clauses, `EXISTS (
 			SELECT 1 FROM news_article_securities ns_filter
 			WHERE ns_filter.article_id=a.id AND ns_filter.symbol_at_publication=?
+				AND ns_filter.review_status<>'rejected'
 		)`)
 		args = append(args, symbol)
 	}
