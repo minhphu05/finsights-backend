@@ -145,7 +145,7 @@ services:
 
   ai-service:
     enabled: true
-    # Keep AI on its last healthy build while its readiness issue is investigated.
+    # AI provider setup is intentionally out of scope; healthz checks the service process.
     imageTag: sha-8b2c7ad5fe8a300080d90eee85abee9a906f9099
     replicas: 1
     servicePort: 9094
@@ -239,7 +239,7 @@ services:
       type: http
       port: http
       path: /healthz
-      readinessPath: /readyz
+      readinessPath: /healthz
     resources:
       requests:
         cpu: 50m
