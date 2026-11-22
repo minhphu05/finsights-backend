@@ -239,13 +239,21 @@ func (s *Service) ListIndices(ctx context.Context, _ *finsightsv1.ListIndicesReq
 func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsRequest) (*finsightsv1.ListNewsResponse, error) {
 	where, args := newsFilters(request)
 	var total uint64
-	if err := s.newsDB.QueryRowContext(ctx, `SELECT COUNT(DISTINCT a.id) `+articleFrom+` `+where, args...).Scan(&total); err != nil {
+	if err := s.newsDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM news_articles a `+where, args...).Scan(&total); err != nil {
 		slog.ErrorContext(ctx, "news count query failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	limit, offset := pageBounds(request.GetLimit(), request.GetOffset(), 100, 20)
-	query := articleSelect + ` ` + articleFrom + ` ` + where + `
-		GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC LIMIT ? OFFSET ?`
+	query := articleSelect + ` FROM (
+		SELECT a.id FROM news_articles a ` + where + `
+		ORDER BY a.published_at DESC,a.id DESC LIMIT ? OFFSET ?
+	) article_page
+	JOIN news_articles a ON a.id=article_page.id
+	JOIN news_publishers pub ON pub.id=a.publisher_id
+	LEFT JOIN news_article_securities ns ON ns.article_id=a.id
+	LEFT JOIN news_article_categories ac ON ac.article_id=a.id AND ac.is_primary=1
+	LEFT JOIN news_categories cat ON cat.id=ac.category_id
+	GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC`
 	rows, err := s.newsDB.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
 		slog.ErrorContext(ctx, "news list query failed", "error", err)
@@ -572,12 +580,25 @@ func newsFilters(request *finsightsv1.ListNewsRequest) (string, []any) {
 	clauses := []string{"a.article_status='published'", "(a.published_at IS NULL OR a.published_at<=UTC_TIMESTAMP(3))"}
 	args := []any{}
 	if symbol := strings.ToUpper(strings.TrimSpace(request.GetSymbol())); symbol != "" {
-		clauses = append(clauses, `ns.symbol_at_publication=?`)
+		clauses = append(clauses, `EXISTS (
+			SELECT 1 FROM news_article_securities ns_filter
+			WHERE ns_filter.article_id=a.id AND ns_filter.symbol_at_publication=?
+		)`)
 		args = append(args, symbol)
 	}
 	if category := strings.TrimSpace(request.GetCategory()); category != "" {
-		clauses = append(clauses, `COALESCE(cat.name,a.original_section)=?`)
-		args = append(args, category)
+		clauses = append(clauses, `(
+			EXISTS (
+				SELECT 1 FROM news_article_categories ac_filter
+				JOIN news_categories cat_filter ON cat_filter.id=ac_filter.category_id
+				WHERE ac_filter.article_id=a.id AND ac_filter.is_primary=1 AND cat_filter.name=?
+			)
+			OR (a.original_section=? AND NOT EXISTS (
+				SELECT 1 FROM news_article_categories ac_filter
+				WHERE ac_filter.article_id=a.id AND ac_filter.is_primary=1
+			))
+		)`)
+		args = append(args, category, category)
 	}
 	if query := strings.TrimSpace(request.GetQuery()); query != "" {
 		clauses = append(clauses, `(a.title LIKE ? OR a.summary LIKE ? OR a.excerpt LIKE ?)`)
