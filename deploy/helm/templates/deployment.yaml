@@ -39,7 +39,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ $name }}
-          image: {{ printf "%s/%s:%s" $root.Values.image.registry $name $root.Values.image.imageTag | quote }}
+          image: {{ printf "%s/%s:%s" $root.Values.image.registry $name ($service.imageTag | default $root.Values.image.imageTag) | quote }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
