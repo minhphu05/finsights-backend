@@ -146,7 +146,7 @@ services:
   ai-service:
     enabled: true
     # Keep AI on its last healthy build while its readiness issue is investigated.
-    imageTag: sha-a45a56470b6e06164181543beec50bee65742a20
+    imageTag: sha-8b2c7ad5fe8a300080d90eee85abee9a906f9099
     replicas: 1
     servicePort: 9094
     mysql: true
