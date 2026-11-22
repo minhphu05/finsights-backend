@@ -1,6 +1,6 @@
 image:
   registry: ghcr.io/minhphu05/finsights-backend
-  imageTag: sha-09741719c6063ea84edcf631d6d6b37f7cc273f5
+  imageTag: sha-a45a56470b6e06164181543beec50bee65742a20
   pullPolicy: IfNotPresent
   pullSecrets: []
 
