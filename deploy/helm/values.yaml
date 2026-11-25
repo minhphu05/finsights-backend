@@ -34,10 +34,8 @@ services:
         value: finsights-backend-user-service:9092
       - name: MARKET_SERVICE_ADDR
         value: finsights-backend-market-service:9093
-      - name: AI_SERVICE_ADDR
-        value: finsights-backend-ai-service:9094
       - name: AI_HTTP_SERVICE_ADDR
-        value: http://finsights-backend-ai-service:8081
+        value: http://finsights-ai-api.orchestration.svc.cluster.local:8081
     secretEnv:
       - name: JWT_SIGNING_KEY
         key: JWT_SIGNING_KEY

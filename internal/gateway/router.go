@@ -1,13 +1,16 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	finsightsv1 "github.com/minhphu05/finsights-backend/gen/go/finsights/v1"
@@ -20,7 +23,6 @@ type Clients struct {
 	Auth   finsightsv1.AuthServiceClient
 	User   finsightsv1.UserServiceClient
 	Market finsightsv1.MarketServiceClient
-	AI     finsightsv1.AIServiceClient
 }
 
 type Router struct {
@@ -37,7 +39,7 @@ func New(clients Clients, jwtKey []byte, issuer string, allowedOrigins []string,
 	router := &Router{
 		clients: clients, jwtKey: jwtKey, issuer: issuer, api: gin.New(),
 		aiHTTPBaseURL: strings.TrimRight(aiHTTPBaseURL, "/"),
-		aiHTTPClient:  &http.Client{Timeout: 15 * time.Second},
+		aiHTTPClient:  &http.Client{Timeout: 75 * time.Second},
 	}
 	router.api.Use(gin.Recovery())
 	router.api.Use(corsMiddleware(allowedOrigins))
@@ -427,31 +429,127 @@ func (r *Router) removeWatchlist(c *gin.Context) {
 }
 
 func (r *Router) askAI(c *gin.Context) {
-	var body finsightsv1.AIAskRequest
+	var body struct {
+		Message   string `json:"message" binding:"required"`
+		SessionID string `json:"session_id"`
+	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+		writeError(c, http.StatusBadRequest, "message is required")
 		return
 	}
-	token, ok := security.BearerValue(c.GetHeader("Authorization"))
+	body.Message = strings.TrimSpace(body.Message)
+	if body.Message == "" || utf8.RuneCountInString(body.Message) > 2000 {
+		writeError(c, http.StatusBadRequest, "message must contain 1 to 2000 characters")
+		return
+	}
+	identity, ok := r.userIdentity(c)
 	if !ok {
-		writeError(c, http.StatusUnauthorized, "bearer token required")
+		writeError(c, http.StatusUnauthorized, "user identity is required")
 		return
 	}
-	identity, err := security.Parse(r.jwtKey, r.issuer, token)
-	if err != nil {
-		writeError(c, http.StatusUnauthorized, "invalid access token")
+	if r.aiHTTPBaseURL == "" {
+		writeError(c, http.StatusServiceUnavailable, "AI service is unavailable")
 		return
 	}
-	body.UserId = identity.AccountID
-	ctx := security.ForwardBearer(c.Request.Context(), c.GetHeader("Authorization"))
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 70*time.Second)
 	defer cancel()
-	response, err := r.clients.AI.Ask(ctx, &body)
+	sessionID := strings.TrimSpace(body.SessionID)
+	if sessionID == "" {
+		createStatus, contentType, createBody, err := r.doAIRequest(
+			ctx, http.MethodPost, "/v1/sessions", nil, identity.AccountID,
+		)
+		if err != nil {
+			writeError(c, http.StatusServiceUnavailable, "AI service is unavailable")
+			return
+		}
+		if createStatus < 200 || createStatus >= 300 {
+			if contentType == "" {
+				contentType = "application/json"
+			}
+			c.Data(createStatus, contentType, createBody)
+			return
+		}
+		var session struct {
+			SessionUID string `json:"session_uid"`
+		}
+		if err := json.Unmarshal(createBody, &session); err != nil || session.SessionUID == "" {
+			writeError(c, http.StatusBadGateway, "AI service returned an invalid session")
+			return
+		}
+		sessionID = session.SessionUID
+	}
+	requestBody, err := json.Marshal(struct {
+		Question string `json:"question"`
+	}{Question: body.Message})
 	if err != nil {
-		writeRPCError(c, err)
+		writeError(c, http.StatusInternalServerError, "could not encode AI request")
 		return
 	}
-	c.JSON(http.StatusOK, response)
+	responseStatus, contentType, responseBody, err := r.doAIRequest(
+		ctx,
+		http.MethodPost,
+		"/v1/sessions/"+url.PathEscape(sessionID)+"/messages?profile=deepseek",
+		requestBody,
+		identity.AccountID,
+	)
+	if err != nil {
+		writeError(c, http.StatusServiceUnavailable, "AI service is unavailable")
+		return
+	}
+	if responseStatus != http.StatusOK {
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		c.Data(responseStatus, contentType, responseBody)
+		return
+	}
+	var result struct {
+		SessionUID  string   `json:"session_uid"`
+		Answer      string   `json:"answer"`
+		ToolCalls   any      `json:"tool_calls"`
+		Verified    bool     `json:"verified"`
+		Unsupported []string `json:"unsupported"`
+	}
+	if err := json.Unmarshal(responseBody, &result); err != nil || strings.TrimSpace(result.Answer) == "" {
+		writeError(c, http.StatusBadGateway, "AI service returned an invalid response")
+		return
+	}
+	if result.SessionUID != "" {
+		sessionID = result.SessionUID
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"session_id":    sessionID,
+		"answer":        result.Answer,
+		"stock_symbols": []string{},
+		"article_slugs": []string{},
+		"tool_calls":    result.ToolCalls,
+		"verified":      result.Verified,
+		"unsupported":   result.Unsupported,
+	})
+}
+
+func (r *Router) doAIRequest(ctx context.Context, method, path string, body []byte, userID string) (int, string, []byte, error) {
+	if r.aiHTTPBaseURL == "" {
+		return 0, "", nil, io.ErrUnexpectedEOF
+	}
+	request, err := http.NewRequestWithContext(ctx, method, r.aiHTTPBaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, "", nil, err
+	}
+	request.Header.Set("X-User-Id", userID)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := r.aiHTTPClient.Do(request)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return 0, "", nil, err
+	}
+	return response.StatusCode, response.Header.Get("Content-Type"), responseBody, nil
 }
 
 func (r *Router) listAISessions(c *gin.Context) {
@@ -460,12 +558,7 @@ func (r *Router) listAISessions(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid limit")
 		return
 	}
-	offset, err := parseUint(c.DefaultQuery("offset", "0"), 1000)
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid offset")
-		return
-	}
-	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions?limit="+strconv.FormatUint(uint64(limit), 10)+"&offset="+strconv.FormatUint(uint64(offset), 10))
+	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions?limit="+strconv.FormatUint(uint64(limit), 10))
 }
 
 func (r *Router) getAISessionMessages(c *gin.Context) {
@@ -474,7 +567,7 @@ func (r *Router) getAISessionMessages(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions/"+sessionID+"/messages?limit=100")
+	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions/"+sessionID)
 }
 
 func (r *Router) deleteAISession(c *gin.Context) {
@@ -496,7 +589,12 @@ func (r *Router) proxyAIHistory(c *gin.Context, method, path string) {
 		writeError(c, http.StatusInternalServerError, "could not create AI request")
 		return
 	}
-	request.Header.Set("Authorization", c.GetHeader("Authorization"))
+	identity, ok := r.userIdentity(c)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "user identity is required")
+		return
+	}
+	request.Header.Set("X-User-Id", identity.AccountID)
 	response, err := r.aiHTTPClient.Do(request)
 	if err != nil {
 		writeError(c, http.StatusServiceUnavailable, "AI history service is unavailable")
@@ -529,8 +627,18 @@ func (r *Router) requireJWT() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		c.Set("user_identity", identity)
 		c.Next()
 	}
+}
+
+func (r *Router) userIdentity(c *gin.Context) (security.Identity, bool) {
+	identity, ok := c.Get("user_identity")
+	if !ok {
+		return security.Identity{}, false
+	}
+	user, ok := identity.(security.Identity)
+	return user, ok
 }
 
 func (r *Router) requireAdminJWT() gin.HandlerFunc {

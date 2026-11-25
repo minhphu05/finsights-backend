@@ -34,16 +34,12 @@ func main() {
 	defer userConn.Close()
 	marketConn := dial(config.String("MARKET_SERVICE_ADDR", "market-service:9093"))
 	defer marketConn.Close()
-	aiConn := dial(config.String("AI_SERVICE_ADDR", "ai-service:9094"))
-	defer aiConn.Close()
-
 	router := gateway.New(gateway.Clients{
 		Auth:   finsightsv1.NewAuthServiceClient(authConn),
 		User:   finsightsv1.NewUserServiceClient(userConn),
 		Market: finsightsv1.NewMarketServiceClient(marketConn),
-		AI:     finsightsv1.NewAIServiceClient(aiConn),
 	}, []byte(key), issuer, strings.Split(config.String("CORS_ALLOWED_ORIGINS", ""), ","),
-		config.String("AI_HTTP_SERVICE_ADDR", "http://ai-service:8081"))
+		config.String("AI_HTTP_SERVICE_ADDR", "http://finsights-ai-api.orchestration.svc.cluster.local:8081"))
 
 	addr := config.String("GATEWAY_HTTP_ADDR", ":8080")
 	server := &http.Server{Addr: addr, Handler: router.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}

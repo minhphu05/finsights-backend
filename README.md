@@ -105,6 +105,10 @@ The frontend repository currently serves mock market/news data and browser-local
 | --- | --- | --- | --- |
 | `POST` | `/api/v1/auth/register` | No | Create account; profile provisioning continues asynchronously |
 | `POST` | `/api/v1/auth/login` | No | Issue an access token |
+| `POST` | `/api/v1/admin/auth/login` | No | Admin-only username/password login; issues an admin token |
+| `GET` | `/api/v1/admin/auth/me` | Admin bearer token | Verify the current admin account |
+| `GET` | `/api/v1/admin/admins` | Admin bearer token | List admin accounts |
+| `POST` | `/api/v1/admin/admins` | Admin bearer token | Create another admin account |
 | `GET` | `/api/v1/users/me` | Bearer token | Read profile |
 | `PATCH` | `/api/v1/users/me` | Bearer token | Update display name |
 | `GET` | `/api/v1/users/me/watchlist` | Bearer token | List watchlist symbols |
@@ -116,14 +120,18 @@ The frontend repository currently serves mock market/news data and browser-local
 | `GET` | `/api/v1/indices` | No | Market indices and latest values |
 | `GET` | `/api/v1/news` | No | Financial news, optionally filtered by symbol/category |
 | `GET` | `/api/v1/news/:slug` | No | Article detail |
-| `POST` | `/api/v1/ai/chat` | Bearer token | Ask the AI service; account ID comes from the verified JWT |
-| `GET` | `/api/v1/ai/sessions` | Bearer token | List the caller's chat sessions (`limit`, `offset`) |
-| `GET` | `/api/v1/ai/sessions/:session_id/messages` | Bearer token | Read only messages belonging to the caller's session |
+| `POST` | `/api/v1/ai/chat` | Bearer token | Forward a financial-agent run to the internal `finsights-ai-service` HTTP API |
+| `GET` | `/api/v1/ai/sessions` | Bearer token | List the caller's AI-service chat sessions (`limit`) |
+| `GET` | `/api/v1/ai/sessions/:session_id/messages` | Bearer token | Read messages from the caller's AI-service session |
 | `DELETE` | `/api/v1/ai/sessions/:session_id` | Bearer token | Close a session (soft delete) |
 
-Health endpoints are `/livez` and `/readyz` on the gateway, `/healthz` and `/readyz` on FastAPI, and standard gRPC health checks for Go services.
+The gateway validates the user JWT and forwards the verified account UUID as `X-User-Id` to
+the private FastAPI AI service. The AI service is not exposed through public ingress. Admins
+use a separate username/password login and token scope from regular Google/user accounts.
 
-Chat request body is `{"message":"Tóm tắt tin mới về SHB","session_id":null}` with a bearer token. Omit `session_id` to create a chat; send the returned UUID to continue it. The account ID is always taken from the verified token. The response includes the answer, session ID, detected symbols and article slugs; citations are included as links in the answer.
+Health endpoints are `/livez` and `/readyz` on the gateway, `/healthz` on the FastAPI AI service, and standard gRPC health checks for Go services.
+
+Chat request body is `{"message":"Tóm tắt tin mới về SHB","session_id":""}` with a user bearer token. The gateway creates a session when needed, maps `message` to the AI agent's `question`, and forwards it to the AI service session endpoint. The verified account UUID scopes session reads and writes.
 
 ## Open decisions
 
