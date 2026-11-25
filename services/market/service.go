@@ -3,9 +3,11 @@ package market
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -248,24 +250,35 @@ func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsReq
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	limit, offset := pageBounds(request.GetLimit(), request.GetOffset(), 100, 20)
-	query := articleSelect + ` FROM (
-		SELECT a.id FROM news_articles a ` + where + `
-		ORDER BY a.published_at DESC,a.id DESC LIMIT ? OFFSET ?
-	) article_page
-	JOIN news_articles a ON a.id=article_page.id
-	JOIN news_publishers pub ON pub.id=a.publisher_id
-		LEFT JOIN news_article_securities ns ON ns.article_id=a.id AND ns.review_status<>'rejected'
-	LEFT JOIN news_article_categories ac ON ac.article_id=a.id AND ac.is_primary=1
-	LEFT JOIN news_categories cat ON cat.id=ac.category_id
-		LEFT JOIN news_article_quality nq ON nq.article_id=a.id
-	GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC`
-	rows, err := s.newsDB.QueryContext(ctx, query, append(args, limit, offset)...)
+	// total counts every match, so the cursor narrows the page only after counting.
+	if token := strings.TrimSpace(request.GetCursor()); token != "" {
+		cursor, err := decodeNewsCursor(token)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, "cursor is invalid")
+		}
+		clause, cursorArgs := cursor.after()
+		where += ` AND ` + clause
+		args = append(args, cursorArgs...)
+		offset = 0
+	}
+	ids, nextCursor, err := s.newsPage(ctx, where, args, limit, offset)
+	if err != nil {
+		slog.ErrorContext(ctx, "news page query failed", "error", err)
+		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
+	}
+	if len(ids) == 0 {
+		return &finsightsv1.ListNewsResponse{Total: total}, nil
+	}
+	query := articleSelect + ` ` + articleFrom + `
+		WHERE a.id IN (?` + strings.Repeat(`,?`, len(ids)-1) + `)
+		GROUP BY a.id,pub.code ORDER BY a.published_at DESC,a.id DESC`
+	rows, err := s.newsDB.QueryContext(ctx, query, ids...)
 	if err != nil {
 		slog.ErrorContext(ctx, "news list query failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	defer rows.Close()
-	response := &finsightsv1.ListNewsResponse{Total: total}
+	response := &finsightsv1.ListNewsResponse{Total: total, NextCursor: nextCursor}
 	for rows.Next() {
 		article, err := scanArticle(rows)
 		if err != nil {
@@ -279,6 +292,84 @@ func (s *Service) ListNews(ctx context.Context, request *finsightsv1.ListNewsReq
 		return nil, status.Error(codes.Unavailable, "news storage is unavailable")
 	}
 	return response, nil
+}
+
+// newsCursor marks the last article of a page in the list order (published_at DESC, id DESC).
+// publishedAt is empty for undated articles, which MySQL sorts last.
+type newsCursor struct {
+	publishedAt string
+	id          uint64
+}
+
+const newsCursorTime = "2006-01-02 15:04:05.000000"
+
+func (c newsCursor) encode() string {
+	return base64.RawURLEncoding.EncodeToString([]byte(c.publishedAt + "|" + strconv.FormatUint(c.id, 10)))
+}
+
+func decodeNewsCursor(token string) (newsCursor, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return newsCursor{}, err
+	}
+	publishedAt, id, found := strings.Cut(string(raw), "|")
+	if !found {
+		return newsCursor{}, errors.New("cursor has no separator")
+	}
+	if publishedAt != "" {
+		if _, err := time.Parse(newsCursorTime, publishedAt); err != nil {
+			return newsCursor{}, err
+		}
+	}
+	parsed, err := strconv.ParseUint(id, 10, 64)
+	if err != nil {
+		return newsCursor{}, err
+	}
+	return newsCursor{publishedAt: publishedAt, id: parsed}, nil
+}
+
+// after is the condition selecting the articles listed after the cursor.
+func (c newsCursor) after() (string, []any) {
+	if c.publishedAt == "" {
+		return `(a.published_at IS NULL AND a.id<?)`, []any{c.id}
+	}
+	return `(a.published_at<? OR (a.published_at=? AND a.id<?) OR a.published_at IS NULL)`,
+		[]any{c.publishedAt, c.publishedAt, c.id}
+}
+
+// newsPage picks the ids of one page, newest first. It reads one row beyond the limit to know whether
+// another page follows; nextCursor is empty when none does.
+func (s *Service) newsPage(ctx context.Context, where string, args []any, limit, offset uint32) ([]any, string, error) {
+	query := `SELECT a.id,COALESCE(DATE_FORMAT(a.published_at,'%Y-%m-%d %H:%i:%s.%f'),'')
+		FROM news_articles a ` + where + `
+		ORDER BY a.published_at DESC,a.id DESC LIMIT ? OFFSET ?`
+	rows, err := s.newsDB.QueryContext(ctx, query, append(append([]any{}, args...), limit+1, offset)...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var ids []any
+	var last newsCursor
+	var more bool
+	for rows.Next() {
+		var row newsCursor
+		if err := rows.Scan(&row.id, &row.publishedAt); err != nil {
+			return nil, "", err
+		}
+		if len(ids) == int(limit) {
+			more = true
+			break
+		}
+		ids = append(ids, row.id)
+		last = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if !more {
+		return ids, "", nil
+	}
+	return ids, last.encode(), nil
 }
 
 func (s *Service) GetNews(ctx context.Context, request *finsightsv1.GetNewsRequest) (*finsightsv1.NewsArticle, error) {

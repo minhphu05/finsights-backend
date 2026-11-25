@@ -89,11 +89,15 @@ message ListNewsRequest {
   uint32 limit = 4;
   uint32 offset = 5;
   string relevance = 6;
+  // next_cursor of the previous page. When set, offset is ignored.
+  string cursor = 7;
 }
 
 message ListNewsResponse {
   repeated NewsArticle articles = 1;
   uint64 total = 2;
+  // Pass back as cursor to read the following page; empty on the last one.
+  string next_cursor = 3;
 }
 
 message GetNewsRequest { string slug = 1; }
