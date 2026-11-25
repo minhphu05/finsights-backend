@@ -377,7 +377,10 @@ func (s *Service) issueAccessToken(accountID int64, email string) (*finsightsv1.
 }
 
 func newUnusablePasswordHash() (string, error) {
-	var secret [48]byte
+	// Bcrypt only processes passwords up to 72 bytes. Hex encoding 32 random
+	// bytes gives us 64 characters, staying below that limit while retaining
+	// 256 bits of entropy for a password that is never disclosed to the user.
+	var secret [32]byte
 	if _, err := rand.Read(secret[:]); err != nil {
 		return "", err
 	}
