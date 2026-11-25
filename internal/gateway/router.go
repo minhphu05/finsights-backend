@@ -59,6 +59,7 @@ func New(clients Clients, jwtKey []byte, issuer string, allowedOrigins []string,
 	admin.GET("/auth/me", router.adminMe)
 	admin.GET("/admins", router.listAdmins)
 	admin.POST("/admins", router.createAdmin)
+	router.registerAIAdmin(admin)
 	v1.GET("/stocks", router.listStocks)
 	v1.GET("/stocks/:symbol", router.getStock)
 	v1.GET("/stocks/:symbol/candles", router.stockCandles)
