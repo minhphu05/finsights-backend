@@ -8,6 +8,9 @@ service AuthService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Login(LoginRequest) returns (LoginResponse);
   rpc GoogleLogin(GoogleLoginRequest) returns (LoginResponse);
+  rpc AdminLogin(AdminLoginRequest) returns (AdminLoginResponse);
+  rpc CreateAdmin(CreateAdminRequest) returns (AdminRecord);
+  rpc ListAdmins(ListAdminsRequest) returns (ListAdminsResponse);
 }
 
 message RegisterRequest {
@@ -35,4 +38,37 @@ message LoginResponse {
   string email = 2;
   string access_token = 3;
   int64 expires_at_unix_ms = 4;
+}
+
+message AdminLoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message AdminLoginResponse {
+  string admin_id = 1;
+  string username = 2;
+  string access_token = 3;
+  int64 expires_at_unix_ms = 4;
+}
+
+message CreateAdminRequest {
+  string username = 1;
+  string password = 2;
+  string actor_admin_id = 3;
+}
+
+message ListAdminsRequest {}
+
+message ListAdminsResponse {
+  repeated AdminRecord admins = 1;
+}
+
+message AdminRecord {
+  string admin_id = 1;
+  string username = 2;
+  bool is_active = 3;
+  string created_by = 4;
+  string created_at = 5;
+  string last_login_at = 6;
 }

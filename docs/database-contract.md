@@ -7,7 +7,10 @@ All timestamps are UTC. Use parameterized SQL and decimal/integer types for mark
 ## Auth schema
 
 - `accounts`: `id` (numeric primary key), `email` (unique), `password_hash`, `created_at`.
+- `admin_accounts`: username/password principals for the admin console, separate from Google-backed user accounts. Passwords are bcrypt hashes; account state, failed-login lockout, last login, and creator are recorded. `ADMIN_BOOTSTRAP_USERNAME`/`ADMIN_BOOTSTRAP_PASSWORD` insert the initial admin only if that username does not exist; service restarts never reset an existing password.
 - `outbox_events`: `id` (ordered primary key), `event_id` (unique), `event_type`, `payload` (JSON), `created_at`, nullable `published_at`.
+
+Admin access tokens use `token_use=admin` and the `admin` role, and expire using the AuthService access-token TTL. Gateway admin routes and the AuthService gRPC methods that list or create admins require this token type. Ordinary account and Google tokens are rejected by admin routes.
 
 The account row and `account.created` outbox row must commit in one transaction. The relay publishes with RabbitMQ message persistence and marks the event published only after broker confirmation. Delivery is at least once; `event_id` is the deduplication key.
 

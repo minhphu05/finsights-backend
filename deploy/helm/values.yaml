@@ -72,6 +72,12 @@ services:
         key: JWT_SIGNING_KEY
       - name: RABBITMQ_URL
         key: RABBITMQ_URL
+      - name: ADMIN_BOOTSTRAP_USERNAME
+        key: ADMIN_BOOTSTRAP_USERNAME
+        optional: true
+      - name: ADMIN_BOOTSTRAP_PASSWORD
+        key: ADMIN_BOOTSTRAP_PASSWORD
+        optional: true
     probe:
       type: tcp
       port: grpc

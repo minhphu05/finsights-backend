@@ -2,3 +2,7 @@ fastapi==0.115.6
 grpcio==1.68.1
 grpcio-tools==1.68.1
 uvicorn[standard]==0.34.0
+httpx==0.28.1
+PyJWT==2.10.1
+mysql-connector-python==9.3.0
+oracledb==3.2.0

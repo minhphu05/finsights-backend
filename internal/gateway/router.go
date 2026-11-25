@@ -52,6 +52,11 @@ func New(clients Clients, jwtKey []byte, issuer string, allowedOrigins []string,
 	v1.POST("/auth/register", router.register)
 	v1.POST("/auth/login", router.login)
 	v1.POST("/auth/google", router.googleLogin)
+	v1.POST("/admin/auth/login", router.adminLogin)
+	admin := v1.Group("/admin", router.requireAdminJWT())
+	admin.GET("/auth/me", router.adminMe)
+	admin.GET("/admins", router.listAdmins)
+	admin.POST("/admins", router.createAdmin)
 	v1.GET("/stocks", router.listStocks)
 	v1.GET("/stocks/:symbol", router.getStock)
 	v1.GET("/stocks/:symbol/candles", router.stockCandles)
@@ -127,6 +132,72 @@ func (r *Router) googleLogin(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) adminLogin(c *gin.Context) {
+	var body finsightsv1.AdminLoginRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "username and password are required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+	defer cancel()
+	response, err := r.clients.Auth.AdminLogin(ctx, &body)
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) adminMe(c *gin.Context) {
+	identity, ok := c.Get("admin_identity")
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "admin identity is required")
+		return
+	}
+	admin, ok := identity.(security.Identity)
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "admin identity is invalid")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"admin_id": admin.AccountID, "username": admin.Email})
+}
+
+func (r *Router) listAdmins(c *gin.Context) {
+	ctx := security.ForwardBearer(c.Request.Context(), c.GetHeader("Authorization"))
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	response, err := r.clients.Auth.ListAdmins(ctx, &finsightsv1.ListAdminsRequest{})
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (r *Router) createAdmin(c *gin.Context) {
+	var body finsightsv1.CreateAdminRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeError(c, http.StatusBadRequest, "username and password are required")
+		return
+	}
+	identity, ok := c.Get("admin_identity")
+	if !ok {
+		writeError(c, http.StatusUnauthorized, "admin identity is required")
+		return
+	}
+	admin := identity.(security.Identity)
+	body.ActorAdminId = admin.AccountID
+	ctx := security.ForwardBearer(c.Request.Context(), c.GetHeader("Authorization"))
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	response, err := r.clients.Auth.CreateAdmin(ctx, &body)
+	if err != nil {
+		writeRPCError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, response)
 }
 
 func (r *Router) listStocks(c *gin.Context) {
@@ -452,11 +523,31 @@ func (r *Router) requireJWT() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if _, err := security.Parse(r.jwtKey, r.issuer, token); err != nil {
+		identity, err := security.Parse(r.jwtKey, r.issuer, token)
+		if err != nil || identity.TokenUse == "admin" {
 			writeError(c, http.StatusUnauthorized, "invalid access token")
 			c.Abort()
 			return
 		}
+		c.Next()
+	}
+}
+
+func (r *Router) requireAdminJWT() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token, ok := security.BearerValue(c.GetHeader("Authorization"))
+		if !ok {
+			writeError(c, http.StatusUnauthorized, "admin bearer token required")
+			c.Abort()
+			return
+		}
+		identity, err := security.Parse(r.jwtKey, r.issuer, token)
+		if err != nil || !security.IsAdmin(identity) {
+			writeError(c, http.StatusForbidden, "admin access required")
+			c.Abort()
+			return
+		}
+		c.Set("admin_identity", identity)
 		c.Next()
 	}
 }

@@ -14,7 +14,7 @@ generate-go:
 
 generate-ai:
 	mkdir -p services/ai/generated
-	python3 -m grpc_tools.protoc -I proto -I /usr/include --python_out=services/ai/generated --grpc_python_out=services/ai/generated proto/finsights/v1/ai.proto
+	python3 -m grpc_tools.protoc -I proto -I /usr/include --python_out=services/ai/generated --grpc_python_out=services/ai/generated proto/finsights/v1/ai.proto proto/finsights/v1/market.proto proto/finsights/v1/user.proto
 	find services/ai/generated -type d -exec touch {}/__init__.py \;
 
 clean-generated:

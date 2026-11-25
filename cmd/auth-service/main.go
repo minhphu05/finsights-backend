@@ -13,6 +13,7 @@ import (
 	"github.com/minhphu05/finsights-backend/internal/database"
 	"github.com/minhphu05/finsights-backend/internal/grpcserver"
 	"github.com/minhphu05/finsights-backend/internal/messaging"
+	"github.com/minhphu05/finsights-backend/internal/security"
 	"github.com/minhphu05/finsights-backend/services/auth"
 	"google.golang.org/grpc"
 )
@@ -37,16 +38,31 @@ func main() {
 	db, err := database.Open(ctx, dsn, maxOpen, maxIdle)
 	must(err)
 	defer db.Close()
+	service := auth.New(db, []byte(key), issuer, ttl, config.String("GOOGLE_OAUTH_CLIENT_ID", ""))
+	bootstrapUsername := config.String("ADMIN_BOOTSTRAP_USERNAME", "")
+	bootstrapPassword := config.String("ADMIN_BOOTSTRAP_PASSWORD", "")
+	if (bootstrapUsername == "") != (bootstrapPassword == "") {
+		must(os.ErrInvalid)
+	}
+	if bootstrapUsername != "" {
+		bootstrapCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := service.BootstrapAdmin(bootstrapCtx, bootstrapUsername, bootstrapPassword)
+		cancel()
+		must(err)
+	}
 
 	rabbitURL, err := config.Required("RABBITMQ_URL")
 	must(err)
 	exchange := config.String("RABBITMQ_EXCHANGE", "finsights.events")
 	go messaging.RunOutboxRelay(ctx, db, rabbitURL, exchange, time.Second)
 
-	service := auth.New(db, []byte(key), issuer, ttl, config.String("GOOGLE_OAUTH_CLIENT_ID", ""))
 	addr := config.String("AUTH_GRPC_ADDR", ":9091")
 	slog.Info("starting auth service", "grpc_addr", addr)
-	must(grpcserver.Serve(ctx, addr, nil, func(server *grpc.Server) {
+	adminMethods := map[string]bool{
+		finsightsv1.AuthService_CreateAdmin_FullMethodName: true,
+		finsightsv1.AuthService_ListAdmins_FullMethodName:  true,
+	}
+	must(grpcserver.Serve(ctx, addr, security.UnaryServerInterceptor([]byte(key), issuer, adminMethods, adminMethods), func(server *grpc.Server) {
 		finsightsv1.RegisterAuthServiceServer(server, service)
 	}))
 }

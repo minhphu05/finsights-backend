@@ -17,27 +17,36 @@ type Identity struct {
 	AccountID string
 	Email     string
 	Roles     []string
+	TokenUse  string
 }
 
 type accessClaims struct {
-	Email string   `json:"email"`
-	Roles []string `json:"roles"`
+	Email    string   `json:"email"`
+	Roles    []string `json:"roles"`
+	TokenUse string   `json:"token_use"`
 	jwt.RegisteredClaims
 }
 
 type identityContextKey struct{}
 
 func Sign(key []byte, issuer, accountID, email string, ttl time.Duration) (string, time.Time, error) {
+	return signWithClaims(key, issuer, accountID, email, []string{"user"}, "user", ttl)
+}
+
+func SignAdmin(key []byte, issuer, adminID, username string, ttl time.Duration) (string, time.Time, error) {
+	return signWithClaims(key, issuer, adminID, username, []string{"admin"}, "admin", ttl)
+}
+
+func signWithClaims(key []byte, issuer, subject, email string, roles []string, tokenUse string, ttl time.Duration) (string, time.Time, error) {
 	if len(key) < 32 {
 		return "", time.Time{}, fmt.Errorf("JWT signing key must be at least 32 bytes")
 	}
 	expires := time.Now().UTC().Add(ttl)
 	claims := accessClaims{
-		Email: email,
-		Roles: []string{"user"},
+		Email: email, Roles: roles, TokenUse: tokenUse,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    issuer,
-			Subject:   accountID,
+			Subject:   subject,
 			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
 			NotBefore: jwt.NewNumericDate(time.Now().UTC().Add(-time.Second)),
 			ExpiresAt: jwt.NewNumericDate(expires),
@@ -58,7 +67,19 @@ func Parse(key []byte, issuer, tokenString string) (Identity, error) {
 	if err != nil || token == nil || !token.Valid || claims.Subject == "" {
 		return Identity{}, fmt.Errorf("invalid access token")
 	}
-	return Identity{AccountID: claims.Subject, Email: claims.Email, Roles: claims.Roles}, nil
+	return Identity{AccountID: claims.Subject, Email: claims.Email, Roles: claims.Roles, TokenUse: claims.TokenUse}, nil
+}
+
+func IsAdmin(identity Identity) bool {
+	if identity.TokenUse != "admin" {
+		return false
+	}
+	for _, role := range identity.Roles {
+		if role == "admin" {
+			return true
+		}
+	}
+	return false
 }
 
 func BearerValue(header string) (string, bool) {
@@ -69,7 +90,7 @@ func BearerValue(header string) (string, bool) {
 	return parts[1], true
 }
 
-func UnaryServerInterceptor(key []byte, issuer string, protectedMethods map[string]bool) grpc.UnaryServerInterceptor {
+func UnaryServerInterceptor(key []byte, issuer string, protectedMethods map[string]bool, adminMethods ...map[string]bool) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if !protectedMethods[info.FullMethod] {
 			return handler(ctx, req)
@@ -89,6 +110,11 @@ func UnaryServerInterceptor(key []byte, issuer string, protectedMethods map[stri
 		identity, err := Parse(key, issuer, token)
 		if err != nil {
 			return nil, status.Error(codes.Unauthenticated, "invalid access token")
+		}
+		for _, methods := range adminMethods {
+			if methods[info.FullMethod] && !IsAdmin(identity) {
+				return nil, status.Error(codes.PermissionDenied, "admin access required")
+			}
 		}
 		ctx = context.WithValue(ctx, identityContextKey{}, identity)
 		return handler(ctx, req)
