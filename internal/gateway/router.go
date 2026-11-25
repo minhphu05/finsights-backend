@@ -457,7 +457,7 @@ func (r *Router) askAI(c *gin.Context) {
 	sessionID := strings.TrimSpace(body.SessionID)
 	if sessionID == "" {
 		createStatus, contentType, createBody, err := r.doAIRequest(
-			ctx, http.MethodPost, "/v1/sessions", nil, identity.AccountID,
+			ctx, http.MethodPost, "/sessions", nil, identity.AccountID,
 		)
 		if err != nil {
 			writeError(c, http.StatusServiceUnavailable, "AI service is unavailable")
@@ -489,7 +489,7 @@ func (r *Router) askAI(c *gin.Context) {
 	responseStatus, contentType, responseBody, err := r.doAIRequest(
 		ctx,
 		http.MethodPost,
-		"/v1/sessions/"+url.PathEscape(sessionID)+"/messages?profile=deepseek",
+		"/sessions/"+url.PathEscape(sessionID)+"/messages?profile=deepseek",
 		requestBody,
 		identity.AccountID,
 	)
@@ -559,7 +559,7 @@ func (r *Router) listAISessions(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid limit")
 		return
 	}
-	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions?limit="+strconv.FormatUint(uint64(limit), 10))
+	r.proxyAIHistory(c, http.MethodGet, "/sessions?limit="+strconv.FormatUint(uint64(limit), 10))
 }
 
 func (r *Router) getAISessionMessages(c *gin.Context) {
@@ -568,7 +568,7 @@ func (r *Router) getAISessionMessages(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	r.proxyAIHistory(c, http.MethodGet, "/v1/sessions/"+sessionID)
+	r.proxyAIHistory(c, http.MethodGet, "/sessions/"+sessionID)
 }
 
 func (r *Router) deleteAISession(c *gin.Context) {
@@ -577,7 +577,7 @@ func (r *Router) deleteAISession(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	r.proxyAIHistory(c, http.MethodDelete, "/v1/sessions/"+sessionID)
+	r.proxyAIHistory(c, http.MethodDelete, "/sessions/"+sessionID)
 }
 
 func (r *Router) proxyAIHistory(c *gin.Context, method, path string) {
