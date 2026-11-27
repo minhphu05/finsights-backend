@@ -55,6 +55,14 @@ func TestAIAdminRoutes(t *testing.T) {
 		{name: "delete key", method: http.MethodDelete, path: "/api/v1/admin/ai/admin/keys/cloudflare_account_id", token: adminToken, wantStatus: http.StatusNoContent, wantCall: "DELETE /admin/keys/cloudflare_account_id "},
 		{name: "health drops the query", method: http.MethodGet, path: "/api/v1/admin/ai/health/providers?live=true", token: adminToken, wantStatus: http.StatusOK, wantCall: "GET /health/providers "},
 		{name: "bad provider id", method: http.MethodDelete, path: "/api/v1/admin/ai/admin/keys/a.b", token: adminToken, wantStatus: http.StatusNotFound},
+		{name: "eval without token", method: http.MethodPost, path: "/api/v1/admin/ai/admin/evals/retrieval", body: `{}`, wantStatus: http.StatusUnauthorized},
+		{name: "eval with user token", method: http.MethodPost, path: "/api/v1/admin/ai/admin/evals/retrieval", body: `{}`, token: userToken, wantStatus: http.StatusForbidden},
+		{name: "eval options", method: http.MethodGet, path: "/api/v1/admin/ai/admin/evals/options", token: adminToken, wantStatus: http.StatusOK, wantCall: "GET /admin/evals/options "},
+		{name: "list eval runs", method: http.MethodGet, path: "/api/v1/admin/ai/admin/evals/retrieval", token: adminToken, wantStatus: http.StatusOK, wantCall: "GET /admin/evals/retrieval "},
+		{name: "start eval run", method: http.MethodPost, path: "/api/v1/admin/ai/admin/evals/retrieval", body: `{"embedding":"bge-m3"}`, token: adminToken, wantStatus: http.StatusOK, wantCall: `POST /admin/evals/retrieval {"embedding":"bge-m3"}`},
+		{name: "eval run too large", method: http.MethodPost, path: "/api/v1/admin/ai/admin/evals/retrieval", body: strings.Repeat("x", 1<<20+1), token: adminToken, wantStatus: http.StatusBadRequest},
+		{name: "get eval run", method: http.MethodGet, path: "/api/v1/admin/ai/admin/evals/retrieval/0123456789abcdef0123456789abcdef", token: adminToken, wantStatus: http.StatusOK, wantCall: "GET /admin/evals/retrieval/0123456789abcdef0123456789abcdef "},
+		{name: "bad eval run id", method: http.MethodGet, path: "/api/v1/admin/ai/admin/evals/retrieval/abc", token: adminToken, wantStatus: http.StatusNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			seen = nil

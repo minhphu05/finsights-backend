@@ -15,14 +15,49 @@ import (
 // else is refused, so a path parameter cannot reach another AI service route.
 var aiProviderID = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 
-// registerAIAdmin exposes the AI service's key management and provider health to admins.
-// The AI service has no authentication of its own: these routes must stay behind the admin JWT.
+// Ids of the AI service's evaluation runs, checked for the same reason.
+var aiEvalRunID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// registerAIAdmin exposes the AI service's key management, provider health and retrieval
+// benchmark to admins. The AI service has no authentication of its own: these routes must stay
+// behind the admin JWT.
 func (r *Router) registerAIAdmin(admin *gin.RouterGroup) {
 	ai := admin.Group("/ai")
 	ai.GET("/admin/keys", r.listAIKeys)
 	ai.PUT("/admin/keys/:provider", r.changeAIKey)
 	ai.DELETE("/admin/keys/:provider", r.changeAIKey)
 	ai.GET("/health/providers", r.aiProvidersHealth)
+	ai.GET("/admin/evals/options", r.aiEvalOptions)
+	ai.GET("/admin/evals/retrieval", r.listAIEvalRuns)
+	ai.POST("/admin/evals/retrieval", r.startAIEvalRun)
+	ai.GET("/admin/evals/retrieval/:run_id", r.getAIEvalRun)
+}
+
+func (r *Router) aiEvalOptions(c *gin.Context) {
+	r.proxyAIAdmin(c, "/admin/evals/options", nil)
+}
+
+func (r *Router) listAIEvalRuns(c *gin.Context) {
+	r.proxyAIAdmin(c, "/admin/evals/retrieval", nil)
+}
+
+// The AI service answers at once with the run id; the run itself continues there.
+func (r *Router) startAIEvalRun(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	r.proxyAIAdmin(c, "/admin/evals/retrieval", body)
+}
+
+func (r *Router) getAIEvalRun(c *gin.Context) {
+	runID := c.Param("run_id")
+	if !aiEvalRunID.MatchString(runID) {
+		writeError(c, http.StatusNotFound, "unknown run")
+		return
+	}
+	r.proxyAIAdmin(c, "/admin/evals/retrieval/"+runID, nil)
 }
 
 func (r *Router) listAIKeys(c *gin.Context) {
